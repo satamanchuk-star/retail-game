@@ -4,6 +4,7 @@ from typing import Annotated
 
 from app.core.config import settings
 from app.domain.auth import AuthService
+from app.domain.balance import FACILITY_FORMATS, STORE_FORMATS
 from app.domain.demo import run_demo_scenario
 from app.domain.engine import GameEngine
 from app.domain.models import (
@@ -20,6 +21,9 @@ from app.domain.models import (
     DayClosureRequest,
     DayResult,
     DemoRunResult,
+    FacilityBuildRequest,
+    FacilityOption,
+    FacilityUpgradeRequest,
     FinancialReport,
     Loan,
     LoanCreate,
@@ -28,6 +32,9 @@ from app.domain.models import (
     PublicGameState,
     PublicUser,
     RatingBoard,
+    StoreBuildRequest,
+    StoreFormatOption,
+    StoreUpgradeRequest,
     User,
     UserLogin,
     UserRegister,
@@ -195,6 +202,139 @@ async def set_decision(
 async def get_assets() -> list[BusinessAsset]:
     """Вернуть магазины, заводы и склады компаний."""
     return _state.assets
+
+
+@router.get("/store-formats", response_model=list[StoreFormatOption])
+async def get_store_formats() -> list[StoreFormatOption]:
+    """Вернуть доступные форматы магазинов с мощностью и стоимостью постройки."""
+    return list(STORE_FORMATS.values())
+
+
+@router.post(
+    "/companies/{company_id}/stores",
+    response_model=BusinessAsset,
+    status_code=201,
+)
+async def build_store(
+    company_id: str,
+    payload: StoreBuildRequest,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Построить ритейлеру новый магазин выбранного формата за счёт его наличных."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.build_store(company_id, payload.store_format, payload.name)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/stores/{asset_id}/upgrade",
+    response_model=BusinessAsset,
+)
+async def upgrade_store(
+    company_id: str,
+    asset_id: str,
+    payload: StoreUpgradeRequest,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Повысить формат магазина ритейлера, доплатив разницу постройки."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.upgrade_store(company_id, asset_id, payload.new_format)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/companies/{company_id}/stores/{asset_id}",
+    response_model=BusinessAsset,
+)
+async def close_store(
+    company_id: str,
+    asset_id: str,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Закрыть магазин ритейлера с частичным возвратом вложений."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.close_store(company_id, asset_id)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/facility-formats", response_model=list[FacilityOption])
+async def get_facility_formats() -> list[FacilityOption]:
+    """Вернуть форматы заводов и складов с мощностью и стоимостью постройки."""
+    options: list[FacilityOption] = []
+    for presets in FACILITY_FORMATS.values():
+        options.extend(presets.values())
+    return options
+
+
+@router.post(
+    "/companies/{company_id}/facilities",
+    response_model=BusinessAsset,
+    status_code=201,
+)
+async def build_facility(
+    company_id: str,
+    payload: FacilityBuildRequest,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Построить производителю завод или дистрибьютору склад за его наличные."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.build_facility(company_id, payload.tier, payload.name)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/facilities/{asset_id}/upgrade",
+    response_model=BusinessAsset,
+)
+async def upgrade_facility(
+    company_id: str,
+    asset_id: str,
+    payload: FacilityUpgradeRequest,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Повысить формат завода или склада с доплатой разницы постройки."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.upgrade_facility(company_id, asset_id, payload.new_tier)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/companies/{company_id}/facilities/{asset_id}",
+    response_model=BusinessAsset,
+)
+async def close_facility(
+    company_id: str,
+    asset_id: str,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Закрыть завод или склад с частичным возвратом вложений."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.close_facility(company_id, asset_id)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/banks", response_model=list[Bank])

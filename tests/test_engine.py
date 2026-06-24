@@ -54,6 +54,62 @@ def test_due_contract_transfers_inventory() -> None:
     assert state.inventories["player"]["bread"] >= 0
 
 
+def test_npc_producer_restocks_raw_materials_and_keeps_producing() -> None:
+    """NPC докупает сырьё и непрерывно производит хлеб и молоко 20 дней."""
+    state = build_initial_state()
+    engine = GameEngine(state)
+    state.raw_inventories["npc_producer"] = {"grain": 0.0, "raw_milk": 0.0, "packaging": 0.0}
+
+    for _ in range(20):
+        engine.close_day()
+
+    producer_report = next(r for r in state.last_reports if r.company_id == "npc_producer")
+    assert producer_report.produced_units > 0
+
+
+def test_npc_produces_multiple_products() -> None:
+    """NPC-производитель выпускает хлеб и молоко в рамках одного дня."""
+    state = build_initial_state()
+    engine = GameEngine(state)
+
+    engine.close_day()
+
+    bread_stock = state.inventories.get("npc_producer", {}).get("bread", 0)
+    milk_stock = state.inventories.get("npc_producer", {}).get("milk", 0)
+    assert bread_stock > 0
+    assert milk_stock > 0
+
+
+def test_npc_decisions_are_applied_automatically() -> None:
+    """NPC-компании получают решения автоматически без вызова set_decision."""
+    state = build_initial_state()
+    engine = GameEngine(state)
+
+    result = engine.close_day()
+
+    producer_report = next(r for r in result.reports if r.company_id == "npc_producer")
+    distributor_report = next(r for r in result.reports if r.company_id == "npc_distributor")
+    assert producer_report.produced_units > 0
+    assert distributor_report.delivered_units > 0
+
+
+def test_npc_upgrades_facility_when_profitable() -> None:
+    """NPC апгрейдит объект если прибылен и хватает денег."""
+    state = build_initial_state()
+    engine = GameEngine(state)
+    producer = next(c for c in state.companies if c.id == "npc_producer")
+    factory = next(a for a in state.assets if a.company_id == "npc_producer")
+    factory.facility_format = "workshop"
+    factory.capacity_units_per_day = 1_200
+    producer.cash_rub = 50_000_000
+
+    for _ in range(10):
+        engine.close_day()
+
+    factory = next(a for a in state.assets if a.company_id == "npc_producer")
+    assert factory.facility_format != "workshop"
+
+
 def test_decision_changes_retail_price() -> None:
     state = build_initial_state()
     low_price_engine = GameEngine(state)

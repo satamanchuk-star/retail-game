@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.domain.balance import (
     BANKS,
+    FACILITY_FORMATS,
     INITIAL_ASSETS,
     INITIAL_INVENTORIES,
     INITIAL_RAW_INVENTORIES,
@@ -13,6 +14,7 @@ from app.domain.balance import (
     RAW_MATERIALS,
     REGIONS,
     STARTER_COMPANIES,
+    STORE_FORMATS,
 )
 from app.domain.models import (
     AssetType,
@@ -26,6 +28,7 @@ from app.domain.models import (
     ContractStatus,
     DayClosureOperation,
     DayClosureRecord,
+    FactoryFormat,
     FinancialReport,
     GameState,
     InventoryBatch,
@@ -36,11 +39,14 @@ from app.domain.models import (
     RawMaterial,
     Region,
     Role,
+    StoreFormat,
+    WarehouseFormat,
     WorldDayResult,
 )
 
 VAT_RATE = 0.20
 PROFIT_TAX_RATE = 0.20
+STORE_CLOSE_REFUND = 0.40
 
 STARTING_CASH_BY_ROLE: dict[Role, int] = {
     Role.RETAILER: 7_500_000,
@@ -75,6 +81,7 @@ class GameEngine:
         self._ensure_company_assets()
         self._ensure_company_inventories()
         self._ensure_inventory_batches()
+        self._backfill_asset_formats()
 
     def _ensure_production_balance(self) -> None:
         """Поддержать старые snapshot-ы без сырья и рецептур."""
@@ -120,6 +127,219 @@ class GameEngine:
         self._require_company(company_id)
         self.state.decisions[company_id] = decision
         return decision
+
+    def build_store(
+        self, company_id: str, store_format: StoreFormat, name: str | None = None
+    ) -> BusinessAsset:
+        """Построить ритейлеру новую торговую точку выбранного формата за наличные."""
+        company = self._require_company(company_id)
+        if company.role != Role.RETAILER:
+            raise ValueError("Магазины может строить только ритейлер")
+        preset = STORE_FORMATS.get(store_format)
+        if preset is None:
+            raise ValueError("Неизвестный формат магазина")
+        if company.cash_rub < preset.build_cost_rub:
+            raise ValueError("Недостаточно средств на постройку магазина")
+
+        store_number = len(self._company_assets(company.id, AssetType.STORE)) + 1
+        asset = BusinessAsset(
+            id=f"asset_{uuid4().hex[:10]}",
+            company_id=company.id,
+            asset_type=AssetType.STORE,
+            name=name or f"{preset.name} «{company.name}» №{store_number}",
+            region_id=company.region_id,
+            capacity_units_per_day=preset.capacity_units_per_day,
+            fixed_cost_rub_per_day=preset.fixed_cost_rub_per_day,
+            storage_type=preset.storage_type,
+            quality_level=1.0,
+            store_format=store_format,
+        )
+        company.cash_rub -= preset.build_cost_rub
+        self.state.assets.append(asset)
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» открыла новый объект: {asset.name}.",
+        )
+        return asset
+
+    def upgrade_store(
+        self, company_id: str, asset_id: str, new_format: StoreFormat
+    ) -> BusinessAsset:
+        """Повысить формат магазина, доплатив разницу в стоимости постройки."""
+        company = self._require_company(company_id)
+        asset = self._require_store(company_id, asset_id)
+        new_preset = STORE_FORMATS.get(new_format)
+        if new_preset is None:
+            raise ValueError("Неизвестный формат магазина")
+        current_cost = (
+            STORE_FORMATS[asset.store_format].build_cost_rub
+            if asset.store_format in STORE_FORMATS
+            else 0
+        )
+        if new_preset.build_cost_rub <= current_cost:
+            raise ValueError("Апгрейд возможен только на более крупный формат")
+        upgrade_cost = new_preset.build_cost_rub - current_cost
+        if company.cash_rub < upgrade_cost:
+            raise ValueError("Недостаточно средств на апгрейд магазина")
+
+        company.cash_rub -= upgrade_cost
+        asset.store_format = new_format
+        asset.capacity_units_per_day = new_preset.capacity_units_per_day
+        asset.fixed_cost_rub_per_day = new_preset.fixed_cost_rub_per_day
+        asset.storage_type = new_preset.storage_type
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» провела апгрейд: {asset.name} → {new_preset.name}.",
+        )
+        return asset
+
+    def close_store(self, company_id: str, asset_id: str) -> BusinessAsset:
+        """Закрыть магазин, вернув часть вложений и сняв постоянные расходы."""
+        company = self._require_company(company_id)
+        asset = self._require_store(company_id, asset_id)
+        stores = self._company_assets(company_id, AssetType.STORE)
+        if len(stores) <= 1:
+            raise ValueError("Нельзя закрыть последний магазин компании")
+
+        refund = 0
+        if asset.store_format in STORE_FORMATS:
+            refund = int(
+                STORE_FORMATS[asset.store_format].build_cost_rub * STORE_CLOSE_REFUND
+            )
+        company.cash_rub += refund
+        self.state.assets = [item for item in self.state.assets if item.id != asset.id]
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» закрыла объект {asset.name} "
+            f"(возврат {refund} ₽).",
+        )
+        return asset
+
+    def _require_store(self, company_id: str, asset_id: str) -> BusinessAsset:
+        """Найти магазин компании или сообщить понятную ошибку."""
+        asset = next(
+            (
+                item
+                for item in self.state.assets
+                if item.id == asset_id and item.company_id == company_id
+            ),
+            None,
+        )
+        if asset is None:
+            raise ValueError("Магазин не найден")
+        if asset.asset_type != AssetType.STORE:
+            raise ValueError("Объект не является магазином")
+        return asset
+
+    def _facility_catalog(self, role: Role) -> tuple[AssetType, dict]:
+        """Сопоставить роль с типом строящегося объекта и его форматами."""
+        if role == Role.PRODUCER:
+            return AssetType.FACTORY, FACILITY_FORMATS[AssetType.FACTORY]
+        if role == Role.DISTRIBUTOR:
+            return AssetType.WAREHOUSE, FACILITY_FORMATS[AssetType.WAREHOUSE]
+        raise ValueError("Эта роль строит магазины, а не заводы или склады")
+
+    def build_facility(
+        self, company_id: str, tier: str, name: str | None = None
+    ) -> BusinessAsset:
+        """Построить производителю завод или дистрибьютору склад за наличные."""
+        company = self._require_company(company_id)
+        asset_type, presets = self._facility_catalog(company.role)
+        preset = presets.get(tier)
+        if preset is None:
+            raise ValueError("Неизвестный формат объекта")
+        if company.cash_rub < preset.build_cost_rub:
+            raise ValueError("Недостаточно средств на постройку объекта")
+
+        count = len(self._company_assets(company.id, asset_type)) + 1
+        asset = BusinessAsset(
+            id=f"asset_{uuid4().hex[:10]}",
+            company_id=company.id,
+            asset_type=asset_type,
+            name=name or f"{preset.name} «{company.name}» №{count}",
+            region_id=company.region_id,
+            capacity_units_per_day=preset.capacity_units_per_day,
+            fixed_cost_rub_per_day=preset.fixed_cost_rub_per_day,
+            storage_type=preset.storage_type,
+            quality_level=1.0,
+            facility_format=tier,
+        )
+        company.cash_rub -= preset.build_cost_rub
+        self.state.assets.append(asset)
+        self.state.news.insert(
+            0, f"Компания «{company.name}» открыла новый объект: {asset.name}."
+        )
+        return asset
+
+    def upgrade_facility(
+        self, company_id: str, asset_id: str, new_tier: str
+    ) -> BusinessAsset:
+        """Повысить формат завода или склада, доплатив разницу постройки."""
+        company = self._require_company(company_id)
+        asset_type, presets = self._facility_catalog(company.role)
+        asset = self._require_facility(company_id, asset_id, asset_type)
+        new_preset = presets.get(new_tier)
+        if new_preset is None:
+            raise ValueError("Неизвестный формат объекта")
+        current_cost = (
+            presets[asset.facility_format].build_cost_rub
+            if asset.facility_format in presets
+            else 0
+        )
+        if new_preset.build_cost_rub <= current_cost:
+            raise ValueError("Апгрейд возможен только на более крупный формат")
+        upgrade_cost = new_preset.build_cost_rub - current_cost
+        if company.cash_rub < upgrade_cost:
+            raise ValueError("Недостаточно средств на апгрейд объекта")
+
+        company.cash_rub -= upgrade_cost
+        asset.facility_format = new_tier
+        asset.capacity_units_per_day = new_preset.capacity_units_per_day
+        asset.fixed_cost_rub_per_day = new_preset.fixed_cost_rub_per_day
+        asset.storage_type = new_preset.storage_type
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» провела апгрейд: {asset.name} → {new_preset.name}.",
+        )
+        return asset
+
+    def close_facility(self, company_id: str, asset_id: str) -> BusinessAsset:
+        """Закрыть завод или склад, вернув часть вложений и сняв расходы."""
+        company = self._require_company(company_id)
+        asset_type, presets = self._facility_catalog(company.role)
+        asset = self._require_facility(company_id, asset_id, asset_type)
+        if len(self._company_assets(company_id, asset_type)) <= 1:
+            raise ValueError("Нельзя закрыть последний объект компании")
+
+        refund = 0
+        if asset.facility_format in presets:
+            refund = int(presets[asset.facility_format].build_cost_rub * STORE_CLOSE_REFUND)
+        company.cash_rub += refund
+        self.state.assets = [item for item in self.state.assets if item.id != asset.id]
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» закрыла объект {asset.name} "
+            f"(возврат {refund} ₽).",
+        )
+        return asset
+
+    def _require_facility(
+        self, company_id: str, asset_id: str, asset_type: AssetType
+    ) -> BusinessAsset:
+        """Найти завод или склад компании нужного типа."""
+        asset = next(
+            (
+                item
+                for item in self.state.assets
+                if item.id == asset_id and item.company_id == company_id
+            ),
+            None,
+        )
+        if asset is None:
+            raise ValueError("Объект не найден")
+        if asset.asset_type != asset_type:
+            raise ValueError("Тип объекта не соответствует роли компании")
+        return asset
 
     def issue_loan(self, payload: LoanCreate) -> Loan:
         """Выдать кредит компании, если банк и лимит позволяют."""
@@ -222,6 +442,7 @@ class GameEngine:
         }
         news: list[str] = []
 
+        self._apply_npc_decisions()
         self._expire_inventory_batches(reports_by_company, operations)
         self._apply_production(reports_by_company, operations)
         self._apply_due_contracts(reports_by_company, news, operations)
@@ -233,6 +454,12 @@ class GameEngine:
         for company in self.state.companies:
             report = reports_by_company[company.id]
             company.cash_rub += report.profit_rub
+
+        for company in self.state.companies:
+            if company.is_npc:
+                upgrade_news = self._npc_try_upgrade(company, reports_by_company)
+                if upgrade_news:
+                    news.insert(0, upgrade_news)
 
         self.state.day += 1
         self.state.last_reports = list(reports_by_company.values())
@@ -266,16 +493,18 @@ class GameEngine:
     def _starting_asset(self, company: Company) -> BusinessAsset:
         """Создать минимальный объект роли при входе компании на рынок."""
         if company.role == Role.RETAILER:
+            preset = STORE_FORMATS[StoreFormat.CONVENIENCE]
             return BusinessAsset(
                 id=f"asset_{uuid4().hex[:10]}",
                 company_id=company.id,
                 asset_type=AssetType.STORE,
                 name=f"Магазин «{company.name}»",
                 region_id=company.region_id,
-                capacity_units_per_day=1_800,
-                fixed_cost_rub_per_day=75_000,
-                storage_type="смешанное",
+                capacity_units_per_day=preset.capacity_units_per_day,
+                fixed_cost_rub_per_day=preset.fixed_cost_rub_per_day,
+                storage_type=preset.storage_type,
                 quality_level=1.0,
+                store_format=StoreFormat.CONVENIENCE,
             )
         if company.role == Role.PRODUCER:
             return BusinessAsset(
@@ -288,6 +517,7 @@ class GameEngine:
                 fixed_cost_rub_per_day=125_000,
                 storage_type="производство",
                 quality_level=1.0,
+                facility_format=FactoryFormat.PLANT.value,
             )
         return BusinessAsset(
             id=f"asset_{uuid4().hex[:10]}",
@@ -296,9 +526,10 @@ class GameEngine:
             name=f"Склад «{company.name}»",
             region_id=company.region_id,
             capacity_units_per_day=3_000,
-            fixed_cost_rub_per_day=40_000,
+            fixed_cost_rub_per_day=60_000,
             storage_type="смешанное",
             quality_level=1.0,
+            facility_format=WarehouseFormat.CENTER.value,
         )
 
     def _company_assets(
@@ -335,6 +566,33 @@ class GameEngine:
             if company.id not in self.state.inventories:
                 self.state.inventories[company.id] = self._starting_inventory(
                     company.role
+                )
+
+    def _backfill_asset_formats(self) -> None:
+        """Вывести форматы объектов, созданных до введения форматной системы."""
+        store_tiers = list(STORE_FORMATS.items())
+        for asset in self.state.assets:
+            if asset.asset_type == AssetType.STORE and asset.store_format is None:
+                asset.store_format = next(
+                    (
+                        fmt
+                        for fmt, opt in reversed(store_tiers)
+                        if asset.capacity_units_per_day >= opt.capacity_units_per_day
+                    ),
+                    StoreFormat.KIOSK,
+                )
+            elif (
+                asset.asset_type in (AssetType.FACTORY, AssetType.WAREHOUSE)
+                and asset.facility_format is None
+            ):
+                presets = FACILITY_FORMATS.get(asset.asset_type, {})
+                asset.facility_format = next(
+                    (
+                        tier
+                        for tier, opt in reversed(list(presets.items()))
+                        if asset.capacity_units_per_day >= opt.capacity_units_per_day
+                    ),
+                    next(iter(presets), None),
                 )
 
     def _ensure_inventory_batches(self) -> None:
@@ -511,13 +769,63 @@ class GameEngine:
             )
         self.state.inventories = synced
 
+    def _run_recipe(
+        self,
+        company: Company,
+        recipe: ProductionRecipe,
+        requested: int,
+        raw_inventory: dict[str, float],
+        raw_by_id: dict,
+        reports: dict[str, CompanyDayReport],
+        operations: list[DayClosureOperation],
+        out_mult: float,
+    ) -> None:
+        product = self._get_product(recipe.product_id)
+        max_by_raw = self._max_production_by_raw(recipe, raw_inventory)
+        base_produced = min(requested, max_by_raw)
+        produced = int(base_produced * out_mult)
+        if requested and base_produced < requested:
+            operations.append(
+                DayClosureOperation(
+                    step="raw_material_shortage",
+                    company_id=company.id,
+                    quantity=requested - base_produced,
+                    message=(
+                        f"Не хватило сырья для {requested - base_produced} ед. "
+                        f"товара {product.name}."
+                    ),
+                )
+            )
+        if base_produced:
+            self._consume_raw_materials(recipe, raw_inventory, base_produced)
+        unit_cost = self._recipe_unit_cost(recipe, raw_by_id)
+        if produced:
+            self._add_inventory_batch(
+                company_id=company.id,
+                product_id=product.id,
+                quantity=produced,
+                quality=0.98,
+                created_day=self.state.day + 1,
+            )
+        reports[company.id].produced_units += produced
+        reports[company.id].costs_rub += produced * unit_cost
+        reports[company.id].profit_rub -= produced * unit_cost
+        if produced:
+            operations.append(
+                DayClosureOperation(
+                    step="production",
+                    company_id=company.id,
+                    amount_rub=produced * unit_cost,
+                    quantity=produced,
+                    message=f"Произведено {produced} ед. товара {product.name}.",
+                )
+            )
+
     def _apply_production(
         self,
         reports: dict[str, CompanyDayReport],
         operations: list[DayClosureOperation],
     ) -> None:
-        recipe = self._get_default_recipe()
-        product = self._get_product(recipe.product_id)
         raw_by_id = {material.id: material for material in self.state.raw_materials}
         for company in self.state.companies:
             if company.role != Role.PRODUCER:
@@ -525,48 +833,23 @@ class GameEngine:
             raw_inventory = self.state.raw_inventories.setdefault(
                 company.id, self._starting_raw_inventory()
             )
-            decision = self.state.decisions.get(company.id, CompanyDecision())
-            requested = min(
-                decision.production_units,
-                self._daily_capacity(company.id, AssetType.FACTORY, 0),
-            )
-            max_by_raw = self._max_production_by_raw(recipe, raw_inventory)
-            produced = min(requested, max_by_raw)
-            if requested and produced < requested:
-                operations.append(
-                    DayClosureOperation(
-                        step="raw_material_shortage",
-                        company_id=company.id,
-                        quantity=requested - produced,
-                        message=(
-                            f"Не хватило сырья для {requested - produced} ед. "
-                            f"товара {product.name}."
-                        ),
+            out_mult = self._factory_output_multiplier(company.id)
+            capacity = self._daily_capacity(company.id, AssetType.FACTORY, 0)
+            if company.is_npc:
+                recipes = self.state.production_recipes
+                per_recipe = max(1, int(capacity * 0.9 / len(recipes))) if recipes else 0
+                for recipe in recipes:
+                    self._run_recipe(
+                        company, recipe, per_recipe, raw_inventory,
+                        raw_by_id, reports, operations, out_mult,
                     )
-                )
-            if produced:
-                self._consume_raw_materials(recipe, raw_inventory, produced)
-            unit_cost = self._recipe_unit_cost(recipe, raw_by_id)
-            if produced:
-                self._add_inventory_batch(
-                    company_id=company.id,
-                    product_id=product.id,
-                    quantity=produced,
-                    quality=0.98,
-                    created_day=self.state.day + 1,
-                )
-            reports[company.id].produced_units += produced
-            reports[company.id].costs_rub += produced * unit_cost
-            reports[company.id].profit_rub -= produced * unit_cost
-            if produced:
-                operations.append(
-                    DayClosureOperation(
-                        step="production",
-                        company_id=company.id,
-                        amount_rub=produced * unit_cost,
-                        quantity=produced,
-                        message=f"Произведено {produced} ед. товара {product.name}.",
-                    )
+            else:
+                recipe = self._get_default_recipe()
+                decision = self.state.decisions.get(company.id, CompanyDecision())
+                requested = min(decision.production_units, capacity)
+                self._run_recipe(
+                    company, recipe, requested, raw_inventory,
+                    raw_by_id, reports, operations, out_mult,
                 )
 
     def _get_default_recipe(self) -> ProductionRecipe:
@@ -682,6 +965,139 @@ class GameEngine:
                 )
             )
 
+    def _npc_restock_raw_materials(self, company: Company) -> None:
+        """NPC докупает сырьё если запас падает ниже 14 дней производства."""
+        capacity = self._daily_capacity(company.id, AssetType.FACTORY, 0)
+        production_rate = int(capacity * 0.9 / max(len(self.state.production_recipes), 1))
+        if not production_rate:
+            return
+        raw_inventory = self.state.raw_inventories.setdefault(company.id, {})
+        raw_by_id = {m.id: m for m in self.state.raw_materials}
+        daily_use: dict[str, float] = {}
+        for recipe in self.state.production_recipes:
+            for item in recipe.inputs:
+                daily_use[item.raw_material_id] = (
+                    daily_use.get(item.raw_material_id, 0.0)
+                    + item.quantity_per_unit * production_rate
+                )
+        for raw_id, use_per_day in daily_use.items():
+            current = raw_inventory.get(raw_id, 0.0)
+            if current >= use_per_day * 14:
+                continue
+            buy_amount = use_per_day * 30 - current
+            material = raw_by_id.get(raw_id)
+            if not material:
+                continue
+            cost = int(buy_amount * material.base_price_rub * 1.1)
+            if company.cash_rub >= cost:
+                company.cash_rub -= cost
+                raw_inventory[raw_id] = current + buy_amount
+
+    def _apply_npc_decisions(self) -> None:
+        """Сформировать решения на день для всех NPC-компаний."""
+        for company in self.state.companies:
+            if not company.is_npc:
+                continue
+            if company.role == Role.PRODUCER:
+                self._npc_restock_raw_materials(company)
+            elif company.role == Role.DISTRIBUTOR:
+                cap = self._daily_capacity(company.id, AssetType.WAREHOUSE, 0)
+                self.state.decisions[company.id] = CompanyDecision(
+                    logistics_capacity_units=int(cap * 0.9),
+                    target_price_index=1.0,
+                )
+            elif company.role == Role.RETAILER:
+                inventory = self.state.inventories.get(company.id, {})
+                total_stock = sum(inventory.values())
+                store_cap = self._daily_capacity(company.id, AssetType.STORE, 1_000)
+                price_index = 1.10 if total_stock < store_cap else 0.95
+                self.state.decisions[company.id] = CompanyDecision(
+                    target_price_index=price_index,
+                    marketing_budget_rub=30_000,
+                )
+
+    def _npc_try_upgrade(
+        self,
+        company: Company,
+        day_reports: dict[str, CompanyDayReport],
+    ) -> str | None:
+        """Апгрейдить один объект NPC если хватает денег (двойной запас)."""
+        try:
+            if company.role == Role.RETAILER:
+                stores = self._company_assets(company.id, AssetType.STORE)
+                store_order = sorted(STORE_FORMATS.keys(), key=lambda f: STORE_FORMATS[f].build_cost_rub)
+                for store in stores:
+                    upgrade_fmt = next(
+                        (
+                            f for f in store_order
+                            if STORE_FORMATS[f].build_cost_rub > STORE_FORMATS.get(store.store_format, STORE_FORMATS[StoreFormat.KIOSK]).build_cost_rub
+                        ),
+                        None,
+                    )
+                    if upgrade_fmt is None:
+                        continue
+                    cost = STORE_FORMATS[upgrade_fmt].build_cost_rub - STORE_FORMATS.get(store.store_format, STORE_FORMATS[StoreFormat.KIOSK]).build_cost_rub
+                    if company.cash_rub >= cost * 2:
+                        self.upgrade_store(company.id, store.id, upgrade_fmt)
+                        return f"NPC «{company.name}» улучшил {store.name} → {STORE_FORMATS[upgrade_fmt].name}."
+            else:
+                asset_type, presets = self._facility_catalog(company.role)
+                facilities = self._company_assets(company.id, asset_type)
+                tiers_sorted = sorted(presets.values(), key=lambda x: x.build_cost_rub)
+                for facility in facilities:
+                    current_cost = presets[facility.facility_format].build_cost_rub if facility.facility_format in presets else 0
+                    next_tier = next(
+                        (t for t in tiers_sorted if t.build_cost_rub > current_cost),
+                        None,
+                    )
+                    if next_tier is None:
+                        continue
+                    upgrade_cost = next_tier.build_cost_rub - current_cost
+                    if company.cash_rub >= upgrade_cost * 2:
+                        self.upgrade_facility(company.id, facility.id, next_tier.tier)
+                        return f"NPC «{company.name}» апгрейдил {facility.name} → {next_tier.name}."
+        except ValueError:
+            pass
+        return None
+
+    def _warehouse_rate_multiplier(self, company_id: str) -> float:
+        """Взвешенный по мощности мультипликатор ставки доставки складов компании."""
+        warehouses = self._company_assets(company_id, AssetType.WAREHOUSE)
+        total_cap = sum(w.capacity_units_per_day for w in warehouses)
+        if not warehouses or not total_cap:
+            return 1.0
+        presets = FACILITY_FORMATS[AssetType.WAREHOUSE]
+        return sum(
+            w.capacity_units_per_day
+            * presets.get(w.facility_format, presets[WarehouseFormat.CENTER.value]).output_multiplier
+            for w in warehouses
+        ) / total_cap
+
+    def _factory_output_multiplier(self, company_id: str) -> float:
+        """Взвешенный по мощности мультипликатор выхода продукции заводов компании."""
+        factories = self._company_assets(company_id, AssetType.FACTORY)
+        total_cap = sum(f.capacity_units_per_day for f in factories)
+        if not factories or not total_cap:
+            return 1.0
+        presets = FACILITY_FORMATS[AssetType.FACTORY]
+        return sum(
+            f.capacity_units_per_day
+            * presets.get(f.facility_format, presets[FactoryFormat.PLANT.value]).output_multiplier
+            for f in factories
+        ) / total_cap
+
+    def _store_demand_multiplier(self, company_id: str) -> float:
+        """Взвешенный по мощности мультипликатор спроса для форматов магазинов."""
+        stores = self._company_assets(company_id, AssetType.STORE)
+        total_cap = sum(s.capacity_units_per_day for s in stores)
+        if not stores or not total_cap:
+            return 1.0
+        return sum(
+            s.capacity_units_per_day
+            * STORE_FORMATS.get(s.store_format, STORE_FORMATS[StoreFormat.CONVENIENCE]).demand_multiplier
+            for s in stores
+        ) / total_cap
+
     def _apply_retail_sales(
         self,
         reports: dict[str, CompanyDayReport],
@@ -694,12 +1110,14 @@ class GameEngine:
             region = self._require_region(company.region_id)
             decision = self.state.decisions.get(company.id, CompanyDecision())
             inventory = self.state.inventories.setdefault(company.id, {})
+            fmt_mult = self._store_demand_multiplier(company.id)
             for product_id, available in list(inventory.items()):
                 product = product_by_id[product_id]
                 demand = int(
                     product.base_daily_demand
                     * region.demand_index
                     * (1.08 if decision.marketing_budget_rub else 1.0)
+                    * fmt_mult
                     / decision.target_price_index
                 )
                 remaining_capacity = max(
@@ -848,11 +1266,12 @@ class GameEngine:
             if company.role != Role.DISTRIBUTOR:
                 continue
             decision = self.state.decisions.get(company.id, CompanyDecision())
+            rate_mult = self._warehouse_rate_multiplier(company.id)
             delivered = min(
                 decision.logistics_capacity_units,
                 self._daily_capacity(company.id, AssetType.WAREHOUSE, 4_000),
             )
-            revenue = delivered * 18
+            revenue = int(delivered * 18 * rate_mult)
             costs = delivered * 9 + self._fixed_costs(
                 company.id, AssetType.WAREHOUSE, 45_000
             )
