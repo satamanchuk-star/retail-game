@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Цепочка прибыли</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Экономическая стратегия</p>
+        <h1>Цепочка прибыли</h1>
+        <p class="lead">Договаривайся, конкурируй и зарабатывай на живом рынке поставок.</p>
+      </div>
+      <div class="hero-actions"><button id="simulate">Завершить день</button><button id="run-demo" class="secondary">Запустить демо 7 дней</button><button id="reset" class="ghost">Сбросить</button></div>
+    </section>
+
+    <section class="grid cards" id="metrics"></section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Игрок и доступ</h2>
+        <p id="auth-status" class="muted">Вы играете без входа. Созданные после входа компании будут закреплены за игроком.</p>
+        <form id="auth-form" class="form-grid">
+          <input name="username" placeholder="Имя игрока" minlength="3" maxlength="32" value="player1" />
+          <input name="password" placeholder="Пароль" type="password" minlength="8" value="password123" />
+          <button name="action" value="register" type="submit">Регистрация</button>
+          <button name="action" value="login" type="submit" class="secondary">Войти</button>
+          <button id="logout" type="button" class="ghost">Выйти</button>
+        </form>
+      </article>
+      <article class="panel compact">
+        <h2>Правила владения</h2>
+        <p class="muted">Авторизованный игрок может менять решения и брать кредиты только для своих компаний. Публичное состояние не содержит пароли и токены.</p>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel compact">
+        <h2>Сохранение мира</h2>
+        <p id="persistence-status" class="muted">Проверяем режим сохранения...</p>
+        <p id="database-status" class="muted">Проверяем DB-режим...</p>
+      </article>
+      <article class="panel compact">
+        <h2>Журнал закрытия дня</h2>
+        <p class="muted">Повторный запуск с тем же ключом не дублирует деньги, остатки и отчёты.</p>
+        <div class="closures" id="day-closures"></div>
+      </article>
+    </section>
+
+    <section class="panel compact">
+      <div class="panel-title">
+        <h2>Статус разработки</h2>
+        <span id="project-progress">Проверяем план...</span>
+      </div>
+      <p id="project-focus" class="muted">Загружаем текущий фокус...</p>
+      <div class="roadmap" id="project-roadmap"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Быстрый вход на рынок</h2>
+        <form id="company-form" class="form-grid">
+          <input name="name" value="Моя сеть" minlength="2" maxlength="60" />
+          <select name="role">
+            <option value="retailer">Ритейлер</option>
+            <option value="producer">Производитель</option>
+            <option value="distributor">Дистрибьютор</option>
+          </select>
+          <select name="region_id" id="region-select"></select>
+          <button type="submit">Создать компанию</button>
+        </form>
+      </article>
+      <article class="panel">
+        <h2>Решение на день</h2>
+        <form id="decision-form" class="form-grid">
+          <select name="company_id" id="company-select"></select>
+          <label>Индекс цены <input name="target_price_index" type="number" min="0.65" max="1.6" step="0.05" value="1.05" /></label>
+          <label>Производство <input name="production_units" type="number" min="0" max="50000" value="1200" /></label>
+          <label>Логистика <input name="logistics_capacity_units" type="number" min="0" max="50000" value="1500" /></label>
+          <label>Маркетинг, ₽ <input name="marketing_budget_rub" type="number" min="0" max="5000000" value="50000" /></label>
+          <button type="submit">Сохранить решение</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>Стратегическая карта</h2>
+        <span>5 регионов · дороги · спрос · логистические риски</span>
+      </div>
+      <div class="map" id="map"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Компании и отчёты</h2>
+        <div class="companies" id="companies"></div>
+      </article>
+      <article class="panel">
+        <h2>Рейтинг рынка</h2>
+        <div class="ratings" id="ratings"></div>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Финансы и налоги</h2>
+        <p class="muted">P&L, cash-flow, НДС и долговая нагрузка после закрытия дня.</p>
+        <div class="finances" id="finances"></div>
+      </article>
+      <article class="panel">
+        <h2>Банки и кредит</h2>
+        <form id="loan-form" class="form-grid">
+          <select name="company_id" id="loan-company-select"></select>
+          <select name="bank_id" id="bank-select"></select>
+          <label>Сумма кредита, ₽ <input name="principal_rub" type="number" min="1" max="100000000" value="3000000" /></label>
+          <label>Срок, дней <input name="term_days" type="number" min="7" max="365" value="30" /></label>
+          <button type="submit">Взять кредит</button>
+        </form>
+        <div class="banks" id="banks"></div>
+      </article>
+      <article class="panel">
+        <h2>Создать контракт</h2>
+        <form id="contract-form" class="form-grid">
+          <select name="seller_id" id="seller-select"></select>
+          <select name="buyer_id" id="buyer-select"></select>
+          <select name="product_id" id="product-select"></select>
+          <label>Количество <input name="quantity" type="number" min="1" max="1000000" value="250" /></label>
+          <label>Цена за единицу, ₽ <input name="unit_price_rub" type="number" min="1" max="1000000" value="52" /></label>
+          <label>День исполнения <input name="due_day" id="due-day" type="number" min="1" value="1" /></label>
+          <label>Штраф, ₽ <input name="penalty_rub" type="number" min="0" max="100000000" value="5000" /></label>
+          <button type="submit">Заключить контракт</button>
+        </form>
+      </article>
+      <article class="panel">
+        <h2>Кредиты и контракты</h2>
+        <div class="loans" id="loans"></div>
+        <div class="contracts" id="contracts"></div>
+      </article>
+      <article class="panel">
+        <h2>Новости и советник</h2>
+        <ul class="news" id="news"></ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>Видимый результат симуляции</h2>
+        <span id="demo-summary">Запусти демо, чтобы увидеть динамику прибыли и операций.</span>
+      </div>
+      <div class="chart" id="profit-chart"></div>
+      <div class="demo-table" id="demo-table"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Операционные объекты</h2>
+        <p class="muted">Магазины, заводы и склады задают реальные дневные мощности и постоянные расходы.</p>
+        <div class="assets" id="assets"></div>
+      </article>
+      <article class="panel">
+        <h2>Сырьё и рецептуры</h2>
+        <p class="muted">Производитель теперь ограничен сырьём: выпуск списывает зерно, молоко-сырьё и упаковку.</p>
+        <div class="raw-materials" id="raw-materials"></div>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Партии и срок годности</h2>
+        <p class="muted">FIFO-остатки показывают владельца, товар, количество, качество и день истечения.</p>
+        <div class="batches" id="inventory-batches"></div>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Товарная матрица</h2>
+        <div class="products" id="products"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
