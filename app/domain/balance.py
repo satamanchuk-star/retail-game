@@ -5,6 +5,8 @@ from app.domain.models import (
     Bank,
     BusinessAsset,
     Company,
+    FacilityOption,
+    FactoryFormat,
     Product,
     ProductionRecipe,
     RawMaterial,
@@ -13,6 +15,7 @@ from app.domain.models import (
     Role,
     StoreFormat,
     StoreFormatOption,
+    WarehouseFormat,
 )
 
 STORE_FORMATS: dict[StoreFormat, StoreFormatOption] = {
@@ -40,6 +43,71 @@ STORE_FORMATS: dict[StoreFormat, StoreFormatOption] = {
         build_cost_rub=14_000_000,
         storage_type="смешанное",
     ),
+}
+
+FACTORY_FORMATS: dict[str, FacilityOption] = {
+    FactoryFormat.WORKSHOP.value: FacilityOption(
+        asset_type=AssetType.FACTORY,
+        tier=FactoryFormat.WORKSHOP.value,
+        name="Цех",
+        capacity_units_per_day=1_200,
+        fixed_cost_rub_per_day=60_000,
+        build_cost_rub=6_000_000,
+        storage_type="производство",
+    ),
+    FactoryFormat.PLANT.value: FacilityOption(
+        asset_type=AssetType.FACTORY,
+        tier=FactoryFormat.PLANT.value,
+        name="Завод",
+        capacity_units_per_day=2_500,
+        fixed_cost_rub_per_day=125_000,
+        build_cost_rub=16_000_000,
+        storage_type="производство",
+    ),
+    FactoryFormat.COMPLEX.value: FacilityOption(
+        asset_type=AssetType.FACTORY,
+        tier=FactoryFormat.COMPLEX.value,
+        name="Комбинат",
+        capacity_units_per_day=5_000,
+        fixed_cost_rub_per_day=240_000,
+        build_cost_rub=34_000_000,
+        storage_type="производство",
+    ),
+}
+
+WAREHOUSE_FORMATS: dict[str, FacilityOption] = {
+    WarehouseFormat.DEPOT.value: FacilityOption(
+        asset_type=AssetType.WAREHOUSE,
+        tier=WarehouseFormat.DEPOT.value,
+        name="Склад",
+        capacity_units_per_day=1_500,
+        fixed_cost_rub_per_day=30_000,
+        build_cost_rub=3_500_000,
+        storage_type="смешанное",
+    ),
+    WarehouseFormat.CENTER.value: FacilityOption(
+        asset_type=AssetType.WAREHOUSE,
+        tier=WarehouseFormat.CENTER.value,
+        name="Распределительный центр",
+        capacity_units_per_day=3_000,
+        fixed_cost_rub_per_day=60_000,
+        build_cost_rub=9_000_000,
+        storage_type="смешанное",
+    ),
+    WarehouseFormat.HUB.value: FacilityOption(
+        asset_type=AssetType.WAREHOUSE,
+        tier=WarehouseFormat.HUB.value,
+        name="Логистический хаб",
+        capacity_units_per_day=6_000,
+        fixed_cost_rub_per_day=110_000,
+        build_cost_rub=22_000_000,
+        storage_type="смешанное",
+    ),
+}
+
+FACILITY_FORMATS: dict[AssetType, dict[str, FacilityOption]] = {
+    AssetType.FACTORY: FACTORY_FORMATS,
+    AssetType.WAREHOUSE: WAREHOUSE_FORMATS,
 }
 
 REGIONS: list[Region] = [
@@ -404,6 +472,7 @@ INITIAL_ASSETS: list[BusinessAsset] = [
         fixed_cost_rub_per_day=140_000,
         storage_type="производство",
         quality_level=1.0,
+        facility_format=FactoryFormat.PLANT.value,
     ),
     BusinessAsset(
         id="asset_distributor_warehouse",
@@ -415,6 +484,7 @@ INITIAL_ASSETS: list[BusinessAsset] = [
         fixed_cost_rub_per_day=45_000,
         storage_type="смешанное",
         quality_level=1.0,
+        facility_format=WarehouseFormat.CENTER.value,
     ),
 ]
 

@@ -33,8 +33,14 @@ const storeCompanySelect = document.querySelector('#store-company-select');
 const storeFormatSelect = document.querySelector('#store-format-select');
 const storeFormatsRoot = document.querySelector('#store-formats');
 const storeListRoot = document.querySelector('#store-list');
+const facilityForm = document.querySelector('#facility-form');
+const facilityCompanySelect = document.querySelector('#facility-company-select');
+const facilityFormatSelect = document.querySelector('#facility-format-select');
+const facilityFormatsRoot = document.querySelector('#facility-formats');
+const facilityListRoot = document.querySelector('#facility-list');
 let lastState = null;
 let lastStoreFormats = [];
+let lastFacilityFormats = [];
 const demoSummary = document.querySelector('#demo-summary');
 const profitChart = document.querySelector('#profit-chart');
 const demoTable = document.querySelector('#demo-table');
@@ -251,6 +257,75 @@ async function fetchStoreFormats() {
   return api('/api/store-formats');
 }
 
+async function fetchFacilityFormats() {
+  return api('/api/facility-formats');
+}
+
+const FACILITY_ASSET_BY_ROLE = { producer: 'factory', distributor: 'warehouse' };
+
+function renderFacilityControls(state, formats) {
+  lastFacilityFormats = formats;
+  const builders = state.companies.filter((company) => FACILITY_ASSET_BY_ROLE[company.role]);
+  const previous = facilityCompanySelect.value;
+  facilityCompanySelect.innerHTML = builders.length
+    ? builders.map((company) => `<option value="${company.id}">${company.name} · ${roleLabel(company.role)} · ${formatRub.format(company.cash_rub)}</option>`).join('')
+    : '<option value="">Нет производителей или дистрибьюторов</option>';
+  if (previous && builders.some((company) => company.id === previous)) {
+    facilityCompanySelect.value = previous;
+  }
+  renderFacilityFormatOptions();
+  renderFacilityList();
+}
+
+function selectedFacilityCompany() {
+  if (!lastState) {
+    return null;
+  }
+  return lastState.companies.find((company) => company.id === facilityCompanySelect.value) || null;
+}
+
+function renderFacilityFormatOptions() {
+  const company = selectedFacilityCompany();
+  const assetType = company ? FACILITY_ASSET_BY_ROLE[company.role] : null;
+  const options = lastFacilityFormats.filter((format) => format.asset_type === assetType);
+  facilityFormatSelect.innerHTML = options.map((format) => `<option value="${format.tier}">${format.name} · ${formatRub.format(format.build_cost_rub)}</option>`).join('');
+  facilityFormatsRoot.innerHTML = options.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день</span></div>`).join('') || '<p class="muted">Выберите производителя или дистрибьютора.</p>';
+}
+
+function nextFacilityFormat(assetType, currentTier) {
+  const order = lastFacilityFormats.filter((format) => format.asset_type === assetType).sort((left, right) => left.build_cost_rub - right.build_cost_rub);
+  const currentCost = order.find((format) => format.tier === currentTier)?.build_cost_rub ?? -1;
+  return order.find((format) => format.build_cost_rub > currentCost) || null;
+}
+
+function renderFacilityList() {
+  if (!lastState) {
+    return;
+  }
+  const company = selectedFacilityCompany();
+  if (!company) {
+    facilityListRoot.innerHTML = '<p class="muted">У выбранной компании нет объектов.</p>';
+    return;
+  }
+  const assetType = FACILITY_ASSET_BY_ROLE[company.role];
+  const facilities = (lastState.assets || []).filter((asset) => asset.company_id === company.id && asset.asset_type === assetType);
+  if (!facilities.length) {
+    facilityListRoot.innerHTML = '<p class="muted">У выбранной компании нет объектов.</p>';
+    return;
+  }
+  const canClose = facilities.length > 1;
+  facilityListRoot.innerHTML = facilities.map((facility) => {
+    const upgrade = nextFacilityFormat(assetType, facility.facility_format);
+    const upgradeButton = upgrade
+      ? `<button type="button" class="secondary" data-action="upgrade" data-company="${company.id}" data-asset="${facility.id}" data-tier="${upgrade.tier}">До «${upgrade.name}» (+${formatRub.format(upgrade.build_cost_rub)})</button>`
+      : '<span class="muted">Максимальный формат</span>';
+    const closeButton = canClose
+      ? `<button type="button" class="ghost" data-action="close" data-company="${company.id}" data-asset="${facility.id}">Закрыть</button>`
+      : '';
+    return `<div class="store-row"><div><b>${facility.name}</b><small>Мощность: ${facility.capacity_units_per_day} ед./день · расходы: ${formatRub.format(facility.fixed_cost_rub_per_day)}/день</small></div><div class="store-row-actions">${upgradeButton}${closeButton}</div></div>`;
+  }).join('');
+}
+
 function renderStoreControls(state, formats) {
   lastState = state;
   lastStoreFormats = formats;
@@ -305,9 +380,11 @@ async function render() {
   const dayClosures = await fetchDayClosures();
   const finances = await fetchFinances();
   const storeFormats = await fetchStoreFormats();
+  const facilityFormats = await fetchFacilityFormats();
   renderMetrics(state);
   renderSelectors(state);
   renderStoreControls(state, storeFormats);
+  renderFacilityControls(state, facilityFormats);
   renderMap(state.regions);
   renderProducts(state.products);
   renderAssets(state);
@@ -381,6 +458,51 @@ storeForm.addEventListener('submit', async (event) => {
 });
 
 storeCompanySelect.addEventListener('change', renderStoreList);
+
+facilityCompanySelect.addEventListener('change', () => {
+  renderFacilityFormatOptions();
+  renderFacilityList();
+});
+
+facilityForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = new FormData(facilityForm);
+  const companyId = form.get('company_id');
+  const tier = form.get('tier');
+  if (!companyId || !tier) {
+    newsRoot.innerHTML = '<li>Выберите производителя или дистрибьютора и формат объекта.</li>';
+    return;
+  }
+  const payload = { tier };
+  const name = (form.get('name') || '').trim();
+  if (name) {
+    payload.name = name;
+  }
+  try {
+    await api(`/api/companies/${companyId}/facilities`, { method: 'POST', body: JSON.stringify(payload) });
+    await render();
+  } catch (error) {
+    newsRoot.innerHTML = `<li>${error.message}</li>`;
+  }
+});
+
+facilityListRoot.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) {
+    return;
+  }
+  const { action, company, asset, tier } = button.dataset;
+  try {
+    if (action === 'upgrade') {
+      await api(`/api/companies/${company}/facilities/${asset}/upgrade`, { method: 'POST', body: JSON.stringify({ new_tier: tier }) });
+    } else if (action === 'close') {
+      await api(`/api/companies/${company}/facilities/${asset}`, { method: 'DELETE' });
+    }
+    await render();
+  } catch (error) {
+    newsRoot.innerHTML = `<li>${error.message}</li>`;
+  }
+});
 
 storeListRoot.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.domain.balance import (
     BANKS,
+    FACILITY_FORMATS,
     INITIAL_ASSETS,
     INITIAL_INVENTORIES,
     INITIAL_RAW_INVENTORIES,
@@ -27,6 +28,7 @@ from app.domain.models import (
     ContractStatus,
     DayClosureOperation,
     DayClosureRecord,
+    FactoryFormat,
     FinancialReport,
     GameState,
     InventoryBatch,
@@ -38,6 +40,7 @@ from app.domain.models import (
     Region,
     Role,
     StoreFormat,
+    WarehouseFormat,
     WorldDayResult,
 )
 
@@ -227,6 +230,116 @@ class GameEngine:
             raise ValueError("Объект не является магазином")
         return asset
 
+    def _facility_catalog(self, role: Role) -> tuple[AssetType, dict]:
+        """Сопоставить роль с типом строящегося объекта и его форматами."""
+        if role == Role.PRODUCER:
+            return AssetType.FACTORY, FACILITY_FORMATS[AssetType.FACTORY]
+        if role == Role.DISTRIBUTOR:
+            return AssetType.WAREHOUSE, FACILITY_FORMATS[AssetType.WAREHOUSE]
+        raise ValueError("Эта роль строит магазины, а не заводы или склады")
+
+    def build_facility(
+        self, company_id: str, tier: str, name: str | None = None
+    ) -> BusinessAsset:
+        """Построить производителю завод или дистрибьютору склад за наличные."""
+        company = self._require_company(company_id)
+        asset_type, presets = self._facility_catalog(company.role)
+        preset = presets.get(tier)
+        if preset is None:
+            raise ValueError("Неизвестный формат объекта")
+        if company.cash_rub < preset.build_cost_rub:
+            raise ValueError("Недостаточно средств на постройку объекта")
+
+        count = len(self._company_assets(company.id, asset_type)) + 1
+        asset = BusinessAsset(
+            id=f"asset_{uuid4().hex[:10]}",
+            company_id=company.id,
+            asset_type=asset_type,
+            name=name or f"{preset.name} «{company.name}» №{count}",
+            region_id=company.region_id,
+            capacity_units_per_day=preset.capacity_units_per_day,
+            fixed_cost_rub_per_day=preset.fixed_cost_rub_per_day,
+            storage_type=preset.storage_type,
+            quality_level=1.0,
+            facility_format=tier,
+        )
+        company.cash_rub -= preset.build_cost_rub
+        self.state.assets.append(asset)
+        self.state.news.insert(
+            0, f"Компания «{company.name}» открыла новый объект: {asset.name}."
+        )
+        return asset
+
+    def upgrade_facility(
+        self, company_id: str, asset_id: str, new_tier: str
+    ) -> BusinessAsset:
+        """Повысить формат завода или склада, доплатив разницу постройки."""
+        company = self._require_company(company_id)
+        asset_type, presets = self._facility_catalog(company.role)
+        asset = self._require_facility(company_id, asset_id, asset_type)
+        new_preset = presets.get(new_tier)
+        if new_preset is None:
+            raise ValueError("Неизвестный формат объекта")
+        current_cost = (
+            presets[asset.facility_format].build_cost_rub
+            if asset.facility_format in presets
+            else 0
+        )
+        if new_preset.build_cost_rub <= current_cost:
+            raise ValueError("Апгрейд возможен только на более крупный формат")
+        upgrade_cost = new_preset.build_cost_rub - current_cost
+        if company.cash_rub < upgrade_cost:
+            raise ValueError("Недостаточно средств на апгрейд объекта")
+
+        company.cash_rub -= upgrade_cost
+        asset.facility_format = new_tier
+        asset.capacity_units_per_day = new_preset.capacity_units_per_day
+        asset.fixed_cost_rub_per_day = new_preset.fixed_cost_rub_per_day
+        asset.storage_type = new_preset.storage_type
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» провела апгрейд: {asset.name} → {new_preset.name}.",
+        )
+        return asset
+
+    def close_facility(self, company_id: str, asset_id: str) -> BusinessAsset:
+        """Закрыть завод или склад, вернув часть вложений и сняв расходы."""
+        company = self._require_company(company_id)
+        asset_type, presets = self._facility_catalog(company.role)
+        asset = self._require_facility(company_id, asset_id, asset_type)
+        if len(self._company_assets(company_id, asset_type)) <= 1:
+            raise ValueError("Нельзя закрыть последний объект компании")
+
+        refund = 0
+        if asset.facility_format in presets:
+            refund = int(presets[asset.facility_format].build_cost_rub * STORE_CLOSE_REFUND)
+        company.cash_rub += refund
+        self.state.assets = [item for item in self.state.assets if item.id != asset.id]
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» закрыла объект {asset.name} "
+            f"(возврат {refund} ₽).",
+        )
+        return asset
+
+    def _require_facility(
+        self, company_id: str, asset_id: str, asset_type: AssetType
+    ) -> BusinessAsset:
+        """Найти завод или склад компании нужного типа."""
+        asset = next(
+            (
+                item
+                for item in self.state.assets
+                if item.id == asset_id and item.company_id == company_id
+            ),
+            None,
+        )
+        if asset is None:
+            raise ValueError("Объект не найден")
+        if asset.asset_type != asset_type:
+            raise ValueError("Тип объекта не соответствует роли компании")
+        return asset
+
     def issue_loan(self, payload: LoanCreate) -> Loan:
         """Выдать кредит компании, если банк и лимит позволяют."""
         company = self._require_company(payload.company_id)
@@ -396,6 +509,7 @@ class GameEngine:
                 fixed_cost_rub_per_day=125_000,
                 storage_type="производство",
                 quality_level=1.0,
+                facility_format=FactoryFormat.PLANT.value,
             )
         return BusinessAsset(
             id=f"asset_{uuid4().hex[:10]}",
@@ -407,6 +521,7 @@ class GameEngine:
             fixed_cost_rub_per_day=40_000,
             storage_type="смешанное",
             quality_level=1.0,
+            facility_format=WarehouseFormat.DEPOT.value,
         )
 
     def _company_assets(

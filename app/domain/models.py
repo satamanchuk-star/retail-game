@@ -36,6 +36,22 @@ class StoreFormat(StrEnum):
     SUPERMARKET = "supermarket"
 
 
+class FactoryFormat(StrEnum):
+    """Формат завода задаёт производственную мощность и стоимость постройки."""
+
+    WORKSHOP = "workshop"
+    PLANT = "plant"
+    COMPLEX = "complex"
+
+
+class WarehouseFormat(StrEnum):
+    """Формат склада задаёт логистическую мощность и стоимость постройки."""
+
+    DEPOT = "depot"
+    CENTER = "center"
+    HUB = "hub"
+
+
 class ContractStatus(StrEnum):
     """Жизненный цикл контракта в прототипе."""
 
@@ -120,6 +136,7 @@ class BusinessAsset(BaseModel):
     storage_type: str
     quality_level: float = Field(default=1.0, ge=0.1, le=2.0)
     store_format: StoreFormat | None = None
+    facility_format: str | None = None
 
 
 class StoreFormatOption(BaseModel):
@@ -146,6 +163,33 @@ class StoreUpgradeRequest(BaseModel):
     """Запрос на повышение формата существующего магазина."""
 
     new_format: StoreFormat
+
+
+class FacilityOption(BaseModel):
+    """Параметры объекта производства/логистики для витрины постройки."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    asset_type: AssetType
+    tier: str
+    name: str
+    capacity_units_per_day: int = Field(gt=0)
+    fixed_cost_rub_per_day: int = Field(ge=0)
+    build_cost_rub: int = Field(gt=0)
+    storage_type: str
+
+
+class FacilityBuildRequest(BaseModel):
+    """Запрос на постройку завода или склада выбранного формата."""
+
+    tier: str = Field(min_length=2, max_length=40)
+    name: str | None = Field(default=None, min_length=2, max_length=60)
+
+
+class FacilityUpgradeRequest(BaseModel):
+    """Запрос на повышение формата завода или склада."""
+
+    new_tier: str = Field(min_length=2, max_length=40)
 
 
 class CompanyCreate(BaseModel):

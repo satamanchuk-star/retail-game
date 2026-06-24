@@ -101,6 +101,20 @@
     </section>
 
     <section class="panel">
+      <h2>Развитие производства и логистики</h2>
+      <p class="muted">Производитель строит заводы, дистрибьютор — склады. Каждый объект добавляет дневную мощность роли и постоянные расходы.</p>
+      <form id="facility-form" class="form-grid">
+        <select name="company_id" id="facility-company-select"></select>
+        <select name="tier" id="facility-format-select"></select>
+        <input name="name" placeholder="Название (необязательно)" maxlength="60" />
+        <button type="submit">Построить объект</button>
+      </form>
+      <div class="store-formats" id="facility-formats"></div>
+      <h3 class="subhead">Объекты выбранной компании</h3>
+      <div class="store-list" id="facility-list"></div>
+    </section>
+
+    <section class="panel">
       <div class="panel-title">
         <h2>Стратегическая карта</h2>
         <span>5 регионов · дороги · спрос · логистические риски</span>
