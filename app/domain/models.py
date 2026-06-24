@@ -28,6 +28,14 @@ class AssetType(StrEnum):
     WAREHOUSE = "warehouse"
 
 
+class StoreFormat(StrEnum):
+    """Формат магазина задаёт мощность, расходы и стоимость постройки."""
+
+    KIOSK = "kiosk"
+    CONVENIENCE = "convenience"
+    SUPERMARKET = "supermarket"
+
+
 class ContractStatus(StrEnum):
     """Жизненный цикл контракта в прототипе."""
 
@@ -111,6 +119,27 @@ class BusinessAsset(BaseModel):
     fixed_cost_rub_per_day: int = Field(ge=0)
     storage_type: str
     quality_level: float = Field(default=1.0, ge=0.1, le=2.0)
+    store_format: StoreFormat | None = None
+
+
+class StoreFormatOption(BaseModel):
+    """Параметры формата магазина для витрины постройки в интерфейсе."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    store_format: StoreFormat
+    name: str
+    capacity_units_per_day: int = Field(gt=0)
+    fixed_cost_rub_per_day: int = Field(ge=0)
+    build_cost_rub: int = Field(gt=0)
+    storage_type: str
+
+
+class StoreBuildRequest(BaseModel):
+    """Запрос ритейлера на постройку новой торговой точки выбранного формата."""
+
+    store_format: StoreFormat
+    name: str | None = Field(default=None, min_length=2, max_length=60)
 
 
 class CompanyCreate(BaseModel):

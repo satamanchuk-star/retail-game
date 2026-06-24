@@ -87,6 +87,18 @@
     </section>
 
     <section class="panel">
+      <h2>Развитие сети (магазины)</h2>
+      <p class="muted">Ритейлер строит новые точки за наличные. Каждый магазин добавляет торговую мощность и постоянные расходы при закрытии дня.</p>
+      <form id="store-form" class="form-grid">
+        <select name="company_id" id="store-company-select"></select>
+        <select name="store_format" id="store-format-select"></select>
+        <input name="name" placeholder="Название (необязательно)" maxlength="60" />
+        <button type="submit">Построить магазин</button>
+      </form>
+      <div class="store-formats" id="store-formats"></div>
+    </section>
+
+    <section class="panel">
       <div class="panel-title">
         <h2>Стратегическая карта</h2>
         <span>5 регионов · дороги · спрос · логистические риски</span>

@@ -28,6 +28,10 @@ const loansRoot = document.querySelector('#loans');
 const financesRoot = document.querySelector('#finances');
 const bankSelect = document.querySelector('#bank-select');
 const loanCompanySelect = document.querySelector('#loan-company-select');
+const storeForm = document.querySelector('#store-form');
+const storeCompanySelect = document.querySelector('#store-company-select');
+const storeFormatSelect = document.querySelector('#store-format-select');
+const storeFormatsRoot = document.querySelector('#store-formats');
 const demoSummary = document.querySelector('#demo-summary');
 const profitChart = document.querySelector('#profit-chart');
 const demoTable = document.querySelector('#demo-table');
@@ -240,6 +244,19 @@ async function fetchRatings() {
   return api('/api/ratings');
 }
 
+async function fetchStoreFormats() {
+  return api('/api/store-formats');
+}
+
+function renderStoreControls(state, formats) {
+  const retailers = state.companies.filter((company) => company.role === 'retailer');
+  storeCompanySelect.innerHTML = retailers.length
+    ? retailers.map((company) => `<option value="${company.id}">${company.name} · ${formatRub.format(company.cash_rub)}</option>`).join('')
+    : '<option value="">Нет ритейлеров — создайте компанию-ритейлера</option>';
+  storeFormatSelect.innerHTML = formats.map((format) => `<option value="${format.store_format}">${format.name} · ${formatRub.format(format.build_cost_rub)}</option>`).join('');
+  storeFormatsRoot.innerHTML = formats.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день</span></div>`).join('');
+}
+
 async function render() {
   const state = await fetchState();
   const ratings = await fetchRatings();
@@ -248,8 +265,10 @@ async function render() {
   const projectStatus = await fetchProjectStatus();
   const dayClosures = await fetchDayClosures();
   const finances = await fetchFinances();
+  const storeFormats = await fetchStoreFormats();
   renderMetrics(state);
   renderSelectors(state);
+  renderStoreControls(state, storeFormats);
   renderMap(state.regions);
   renderProducts(state.products);
   renderAssets(state);
@@ -299,6 +318,27 @@ companyForm.addEventListener('submit', async (event) => {
     body: JSON.stringify(Object.fromEntries(form.entries())),
   });
   await render();
+});
+
+storeForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = new FormData(storeForm);
+  const companyId = form.get('company_id');
+  if (!companyId) {
+    newsRoot.innerHTML = '<li>Сначала создайте компанию-ритейлера, чтобы строить магазины.</li>';
+    return;
+  }
+  const payload = { store_format: form.get('store_format') };
+  const name = (form.get('name') || '').trim();
+  if (name) {
+    payload.name = name;
+  }
+  try {
+    await api(`/api/companies/${companyId}/stores`, { method: 'POST', body: JSON.stringify(payload) });
+    await render();
+  } catch (error) {
+    newsRoot.innerHTML = `<li>${error.message}</li>`;
+  }
 });
 
 loanForm.addEventListener('submit', async (event) => {

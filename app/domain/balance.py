@@ -11,7 +11,36 @@ from app.domain.models import (
     RecipeInput,
     Region,
     Role,
+    StoreFormat,
+    StoreFormatOption,
 )
+
+STORE_FORMATS: dict[StoreFormat, StoreFormatOption] = {
+    StoreFormat.KIOSK: StoreFormatOption(
+        store_format=StoreFormat.KIOSK,
+        name="Киоск",
+        capacity_units_per_day=600,
+        fixed_cost_rub_per_day=25_000,
+        build_cost_rub=1_200_000,
+        storage_type="сухое",
+    ),
+    StoreFormat.CONVENIENCE: StoreFormatOption(
+        store_format=StoreFormat.CONVENIENCE,
+        name="Магазин у дома",
+        capacity_units_per_day=1_800,
+        fixed_cost_rub_per_day=75_000,
+        build_cost_rub=4_500_000,
+        storage_type="смешанное",
+    ),
+    StoreFormat.SUPERMARKET: StoreFormatOption(
+        store_format=StoreFormat.SUPERMARKET,
+        name="Супермаркет",
+        capacity_units_per_day=5_000,
+        fixed_cost_rub_per_day=180_000,
+        build_cost_rub=14_000_000,
+        storage_type="смешанное",
+    ),
+}
 
 REGIONS: list[Region] = [
     Region(
@@ -363,6 +392,7 @@ INITIAL_ASSETS: list[BusinessAsset] = [
         fixed_cost_rub_per_day=85_000,
         storage_type="смешанное",
         quality_level=1.0,
+        store_format=StoreFormat.CONVENIENCE,
     ),
     BusinessAsset(
         id="asset_producer_factory",

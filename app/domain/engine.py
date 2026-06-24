@@ -13,6 +13,7 @@ from app.domain.balance import (
     RAW_MATERIALS,
     REGIONS,
     STARTER_COMPANIES,
+    STORE_FORMATS,
 )
 from app.domain.models import (
     AssetType,
@@ -36,6 +37,7 @@ from app.domain.models import (
     RawMaterial,
     Region,
     Role,
+    StoreFormat,
     WorldDayResult,
 )
 
@@ -120,6 +122,40 @@ class GameEngine:
         self._require_company(company_id)
         self.state.decisions[company_id] = decision
         return decision
+
+    def build_store(
+        self, company_id: str, store_format: StoreFormat, name: str | None = None
+    ) -> BusinessAsset:
+        """Построить ритейлеру новую торговую точку выбранного формата за наличные."""
+        company = self._require_company(company_id)
+        if company.role != Role.RETAILER:
+            raise ValueError("Магазины может строить только ритейлер")
+        preset = STORE_FORMATS.get(store_format)
+        if preset is None:
+            raise ValueError("Неизвестный формат магазина")
+        if company.cash_rub < preset.build_cost_rub:
+            raise ValueError("Недостаточно средств на постройку магазина")
+
+        store_number = len(self._company_assets(company.id, AssetType.STORE)) + 1
+        asset = BusinessAsset(
+            id=f"asset_{uuid4().hex[:10]}",
+            company_id=company.id,
+            asset_type=AssetType.STORE,
+            name=name or f"{preset.name} «{company.name}» №{store_number}",
+            region_id=company.region_id,
+            capacity_units_per_day=preset.capacity_units_per_day,
+            fixed_cost_rub_per_day=preset.fixed_cost_rub_per_day,
+            storage_type=preset.storage_type,
+            quality_level=1.0,
+            store_format=store_format,
+        )
+        company.cash_rub -= preset.build_cost_rub
+        self.state.assets.append(asset)
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» открыла новый объект: {asset.name}.",
+        )
+        return asset
 
     def issue_loan(self, payload: LoanCreate) -> Loan:
         """Выдать кредит компании, если банк и лимит позволяют."""
@@ -266,16 +302,18 @@ class GameEngine:
     def _starting_asset(self, company: Company) -> BusinessAsset:
         """Создать минимальный объект роли при входе компании на рынок."""
         if company.role == Role.RETAILER:
+            preset = STORE_FORMATS[StoreFormat.CONVENIENCE]
             return BusinessAsset(
                 id=f"asset_{uuid4().hex[:10]}",
                 company_id=company.id,
                 asset_type=AssetType.STORE,
                 name=f"Магазин «{company.name}»",
                 region_id=company.region_id,
-                capacity_units_per_day=1_800,
-                fixed_cost_rub_per_day=75_000,
-                storage_type="смешанное",
+                capacity_units_per_day=preset.capacity_units_per_day,
+                fixed_cost_rub_per_day=preset.fixed_cost_rub_per_day,
+                storage_type=preset.storage_type,
                 quality_level=1.0,
+                store_format=StoreFormat.CONVENIENCE,
             )
         if company.role == Role.PRODUCER:
             return BusinessAsset(

@@ -4,6 +4,7 @@ from typing import Annotated
 
 from app.core.config import settings
 from app.domain.auth import AuthService
+from app.domain.balance import STORE_FORMATS
 from app.domain.demo import run_demo_scenario
 from app.domain.engine import GameEngine
 from app.domain.models import (
@@ -28,6 +29,8 @@ from app.domain.models import (
     PublicGameState,
     PublicUser,
     RatingBoard,
+    StoreBuildRequest,
+    StoreFormatOption,
     User,
     UserLogin,
     UserRegister,
@@ -195,6 +198,32 @@ async def set_decision(
 async def get_assets() -> list[BusinessAsset]:
     """Вернуть магазины, заводы и склады компаний."""
     return _state.assets
+
+
+@router.get("/store-formats", response_model=list[StoreFormatOption])
+async def get_store_formats() -> list[StoreFormatOption]:
+    """Вернуть доступные форматы магазинов с мощностью и стоимостью постройки."""
+    return list(STORE_FORMATS.values())
+
+
+@router.post(
+    "/companies/{company_id}/stores",
+    response_model=BusinessAsset,
+    status_code=201,
+)
+async def build_store(
+    company_id: str,
+    payload: StoreBuildRequest,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Построить ритейлеру новый магазин выбранного формата за счёт его наличных."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.build_store(company_id, payload.store_format, payload.name)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/banks", response_model=list[Bank])
