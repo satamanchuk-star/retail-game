@@ -769,13 +769,63 @@ class GameEngine:
             )
         self.state.inventories = synced
 
+    def _run_recipe(
+        self,
+        company: Company,
+        recipe: ProductionRecipe,
+        requested: int,
+        raw_inventory: dict[str, float],
+        raw_by_id: dict,
+        reports: dict[str, CompanyDayReport],
+        operations: list[DayClosureOperation],
+        out_mult: float,
+    ) -> None:
+        product = self._get_product(recipe.product_id)
+        max_by_raw = self._max_production_by_raw(recipe, raw_inventory)
+        base_produced = min(requested, max_by_raw)
+        produced = int(base_produced * out_mult)
+        if requested and base_produced < requested:
+            operations.append(
+                DayClosureOperation(
+                    step="raw_material_shortage",
+                    company_id=company.id,
+                    quantity=requested - base_produced,
+                    message=(
+                        f"Не хватило сырья для {requested - base_produced} ед. "
+                        f"товара {product.name}."
+                    ),
+                )
+            )
+        if base_produced:
+            self._consume_raw_materials(recipe, raw_inventory, base_produced)
+        unit_cost = self._recipe_unit_cost(recipe, raw_by_id)
+        if produced:
+            self._add_inventory_batch(
+                company_id=company.id,
+                product_id=product.id,
+                quantity=produced,
+                quality=0.98,
+                created_day=self.state.day + 1,
+            )
+        reports[company.id].produced_units += produced
+        reports[company.id].costs_rub += produced * unit_cost
+        reports[company.id].profit_rub -= produced * unit_cost
+        if produced:
+            operations.append(
+                DayClosureOperation(
+                    step="production",
+                    company_id=company.id,
+                    amount_rub=produced * unit_cost,
+                    quantity=produced,
+                    message=f"Произведено {produced} ед. товара {product.name}.",
+                )
+            )
+
     def _apply_production(
         self,
         reports: dict[str, CompanyDayReport],
         operations: list[DayClosureOperation],
     ) -> None:
-        recipe = self._get_default_recipe()
-        product = self._get_product(recipe.product_id)
         raw_by_id = {material.id: material for material in self.state.raw_materials}
         for company in self.state.companies:
             if company.role != Role.PRODUCER:
@@ -783,50 +833,23 @@ class GameEngine:
             raw_inventory = self.state.raw_inventories.setdefault(
                 company.id, self._starting_raw_inventory()
             )
-            decision = self.state.decisions.get(company.id, CompanyDecision())
             out_mult = self._factory_output_multiplier(company.id)
-            requested = min(
-                decision.production_units,
-                self._daily_capacity(company.id, AssetType.FACTORY, 0),
-            )
-            max_by_raw = self._max_production_by_raw(recipe, raw_inventory)
-            base_produced = min(requested, max_by_raw)
-            produced = int(base_produced * out_mult)
-            if requested and base_produced < requested:
-                operations.append(
-                    DayClosureOperation(
-                        step="raw_material_shortage",
-                        company_id=company.id,
-                        quantity=requested - produced,
-                        message=(
-                            f"Не хватило сырья для {requested - produced} ед. "
-                            f"товара {product.name}."
-                        ),
+            capacity = self._daily_capacity(company.id, AssetType.FACTORY, 0)
+            if company.is_npc:
+                recipes = self.state.production_recipes
+                per_recipe = max(1, int(capacity * 0.9 / len(recipes))) if recipes else 0
+                for recipe in recipes:
+                    self._run_recipe(
+                        company, recipe, per_recipe, raw_inventory,
+                        raw_by_id, reports, operations, out_mult,
                     )
-                )
-            if base_produced:
-                self._consume_raw_materials(recipe, raw_inventory, base_produced)
-            unit_cost = self._recipe_unit_cost(recipe, raw_by_id)
-            if produced:
-                self._add_inventory_batch(
-                    company_id=company.id,
-                    product_id=product.id,
-                    quantity=produced,
-                    quality=0.98,
-                    created_day=self.state.day + 1,
-                )
-            reports[company.id].produced_units += produced
-            reports[company.id].costs_rub += produced * unit_cost
-            reports[company.id].profit_rub -= produced * unit_cost
-            if produced:
-                operations.append(
-                    DayClosureOperation(
-                        step="production",
-                        company_id=company.id,
-                        amount_rub=produced * unit_cost,
-                        quantity=produced,
-                        message=f"Произведено {produced} ед. товара {product.name}.",
-                    )
+            else:
+                recipe = self._get_default_recipe()
+                decision = self.state.decisions.get(company.id, CompanyDecision())
+                requested = min(decision.production_units, capacity)
+                self._run_recipe(
+                    company, recipe, requested, raw_inventory,
+                    raw_by_id, reports, operations, out_mult,
                 )
 
     def _get_default_recipe(self) -> ProductionRecipe:
@@ -942,17 +965,41 @@ class GameEngine:
                 )
             )
 
+    def _npc_restock_raw_materials(self, company: Company) -> None:
+        """NPC докупает сырьё если запас падает ниже 14 дней производства."""
+        capacity = self._daily_capacity(company.id, AssetType.FACTORY, 0)
+        production_rate = int(capacity * 0.9 / max(len(self.state.production_recipes), 1))
+        if not production_rate:
+            return
+        raw_inventory = self.state.raw_inventories.setdefault(company.id, {})
+        raw_by_id = {m.id: m for m in self.state.raw_materials}
+        daily_use: dict[str, float] = {}
+        for recipe in self.state.production_recipes:
+            for item in recipe.inputs:
+                daily_use[item.raw_material_id] = (
+                    daily_use.get(item.raw_material_id, 0.0)
+                    + item.quantity_per_unit * production_rate
+                )
+        for raw_id, use_per_day in daily_use.items():
+            current = raw_inventory.get(raw_id, 0.0)
+            if current >= use_per_day * 14:
+                continue
+            buy_amount = use_per_day * 30 - current
+            material = raw_by_id.get(raw_id)
+            if not material:
+                continue
+            cost = int(buy_amount * material.base_price_rub * 1.1)
+            if company.cash_rub >= cost:
+                company.cash_rub -= cost
+                raw_inventory[raw_id] = current + buy_amount
+
     def _apply_npc_decisions(self) -> None:
         """Сформировать решения на день для всех NPC-компаний."""
         for company in self.state.companies:
             if not company.is_npc:
                 continue
             if company.role == Role.PRODUCER:
-                cap = self._daily_capacity(company.id, AssetType.FACTORY, 0)
-                self.state.decisions[company.id] = CompanyDecision(
-                    production_units=int(cap * 0.9),
-                    target_price_index=1.0,
-                )
+                self._npc_restock_raw_materials(company)
             elif company.role == Role.DISTRIBUTOR:
                 cap = self._daily_capacity(company.id, AssetType.WAREHOUSE, 0)
                 self.state.decisions[company.id] = CompanyDecision(
