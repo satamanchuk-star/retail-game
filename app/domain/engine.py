@@ -442,6 +442,7 @@ class GameEngine:
         }
         news: list[str] = []
 
+        self._apply_npc_decisions()
         self._expire_inventory_batches(reports_by_company, operations)
         self._apply_production(reports_by_company, operations)
         self._apply_due_contracts(reports_by_company, news, operations)
@@ -453,6 +454,12 @@ class GameEngine:
         for company in self.state.companies:
             report = reports_by_company[company.id]
             company.cash_rub += report.profit_rub
+
+        for company in self.state.companies:
+            if company.is_npc:
+                upgrade_news = self._npc_try_upgrade(company, reports_by_company)
+                if upgrade_news:
+                    news.insert(0, upgrade_news)
 
         self.state.day += 1
         self.state.last_reports = list(reports_by_company.values())
@@ -934,6 +941,77 @@ class GameEngine:
                     message=f"Исполнен контракт {contract.id}.",
                 )
             )
+
+    def _apply_npc_decisions(self) -> None:
+        """Сформировать решения на день для всех NPC-компаний."""
+        for company in self.state.companies:
+            if not company.is_npc:
+                continue
+            if company.role == Role.PRODUCER:
+                cap = self._daily_capacity(company.id, AssetType.FACTORY, 0)
+                self.state.decisions[company.id] = CompanyDecision(
+                    production_units=int(cap * 0.9),
+                    target_price_index=1.0,
+                )
+            elif company.role == Role.DISTRIBUTOR:
+                cap = self._daily_capacity(company.id, AssetType.WAREHOUSE, 0)
+                self.state.decisions[company.id] = CompanyDecision(
+                    logistics_capacity_units=int(cap * 0.9),
+                    target_price_index=1.0,
+                )
+            elif company.role == Role.RETAILER:
+                inventory = self.state.inventories.get(company.id, {})
+                total_stock = sum(inventory.values())
+                store_cap = self._daily_capacity(company.id, AssetType.STORE, 1_000)
+                price_index = 1.10 if total_stock < store_cap else 0.95
+                self.state.decisions[company.id] = CompanyDecision(
+                    target_price_index=price_index,
+                    marketing_budget_rub=30_000,
+                )
+
+    def _npc_try_upgrade(
+        self,
+        company: Company,
+        day_reports: dict[str, CompanyDayReport],
+    ) -> str | None:
+        """Апгрейдить один объект NPC если хватает денег (двойной запас)."""
+        try:
+            if company.role == Role.RETAILER:
+                stores = self._company_assets(company.id, AssetType.STORE)
+                store_order = sorted(STORE_FORMATS.keys(), key=lambda f: STORE_FORMATS[f].build_cost_rub)
+                for store in stores:
+                    upgrade_fmt = next(
+                        (
+                            f for f in store_order
+                            if STORE_FORMATS[f].build_cost_rub > STORE_FORMATS.get(store.store_format, STORE_FORMATS[StoreFormat.KIOSK]).build_cost_rub
+                        ),
+                        None,
+                    )
+                    if upgrade_fmt is None:
+                        continue
+                    cost = STORE_FORMATS[upgrade_fmt].build_cost_rub - STORE_FORMATS.get(store.store_format, STORE_FORMATS[StoreFormat.KIOSK]).build_cost_rub
+                    if company.cash_rub >= cost * 2:
+                        self.upgrade_store(company.id, store.id, upgrade_fmt)
+                        return f"NPC «{company.name}» улучшил {store.name} → {STORE_FORMATS[upgrade_fmt].name}."
+            else:
+                asset_type, presets = self._facility_catalog(company.role)
+                facilities = self._company_assets(company.id, asset_type)
+                tiers_sorted = sorted(presets.values(), key=lambda x: x.build_cost_rub)
+                for facility in facilities:
+                    current_cost = presets[facility.facility_format].build_cost_rub if facility.facility_format in presets else 0
+                    next_tier = next(
+                        (t for t in tiers_sorted if t.build_cost_rub > current_cost),
+                        None,
+                    )
+                    if next_tier is None:
+                        continue
+                    upgrade_cost = next_tier.build_cost_rub - current_cost
+                    if company.cash_rub >= upgrade_cost * 2:
+                        self.upgrade_facility(company.id, facility.id, next_tier.tier)
+                        return f"NPC «{company.name}» апгрейдил {facility.name} → {next_tier.name}."
+        except ValueError:
+            pass
+        return None
 
     def _warehouse_rate_multiplier(self, company_id: str) -> float:
         """Взвешенный по мощности мультипликатор ставки доставки складов компании."""

@@ -34,6 +34,7 @@ def test_new_company_gets_starting_asset() -> None:
 def test_factory_capacity_limits_production() -> None:
     state = build_initial_state()
     engine = GameEngine(state)
+    next(c for c in state.companies if c.id == "npc_producer").is_npc = False
     factory = next(
         asset for asset in state.assets if asset.company_id == "npc_producer"
     )

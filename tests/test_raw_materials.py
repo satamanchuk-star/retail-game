@@ -15,6 +15,7 @@ def test_initial_state_exposes_raw_materials_and_recipes() -> None:
 def test_production_consumes_raw_materials() -> None:
     state = build_initial_state()
     engine = GameEngine(state)
+    next(c for c in state.companies if c.id == "npc_producer").is_npc = False
     grain_before = state.raw_inventories["npc_producer"]["grain"]
     engine.set_decision("npc_producer", CompanyDecision(production_units=100))
 
