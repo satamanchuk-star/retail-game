@@ -90,6 +90,7 @@ WAREHOUSE_FORMATS: dict[str, FacilityOption] = {
         fixed_cost_rub_per_day=30_000,
         build_cost_rub=3_500_000,
         storage_type="смешанное",
+        output_multiplier=0.85,
     ),
     WarehouseFormat.CENTER.value: FacilityOption(
         asset_type=AssetType.WAREHOUSE,
@@ -99,6 +100,7 @@ WAREHOUSE_FORMATS: dict[str, FacilityOption] = {
         fixed_cost_rub_per_day=60_000,
         build_cost_rub=9_000_000,
         storage_type="смешанное",
+        output_multiplier=1.0,
     ),
     WarehouseFormat.HUB.value: FacilityOption(
         asset_type=AssetType.WAREHOUSE,
@@ -108,6 +110,7 @@ WAREHOUSE_FORMATS: dict[str, FacilityOption] = {
         fixed_cost_rub_per_day=110_000,
         build_cost_rub=22_000_000,
         storage_type="смешанное",
+        output_multiplier=1.20,
     ),
 }
 

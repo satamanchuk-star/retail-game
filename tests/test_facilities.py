@@ -165,6 +165,43 @@ def test_complex_produces_more_than_workshop_from_same_raw_materials() -> None:
     )
 
 
+def test_hub_earns_more_than_depot_for_same_logistics_volume() -> None:
+    """Логистический хаб (×1.20) зарабатывает больше склада (×0.85) при равной загрузке."""
+    from app.domain.models import CompanyDecision
+
+    def _make_distributor(engine: GameEngine, name: str) -> object:
+        return engine.create_company(
+            CompanyCreate(name=name, role=Role.DISTRIBUTOR, region_id="north")
+        )
+
+    def _set_warehouse_format(engine: GameEngine, company_id: str, tier: str) -> None:
+        wh = next(a for a in engine.state.assets if a.company_id == company_id)
+        wh.facility_format = tier
+        wh.capacity_units_per_day = (
+            WAREHOUSE_FORMATS[tier].capacity_units_per_day
+        )
+
+    state_d = build_initial_state()
+    eng_d = GameEngine(state_d)
+    co_d = _make_distributor(eng_d, "Склад")
+    _set_warehouse_format(eng_d, co_d.id, "depot")
+    eng_d.state.decisions[co_d.id] = CompanyDecision(logistics_capacity_units=1_000)
+    result_d = eng_d.close_day()
+    rev_depot = next(r.revenue_rub for r in result_d.reports if r.company_id == co_d.id)
+
+    state_h = build_initial_state()
+    eng_h = GameEngine(state_h)
+    co_h = _make_distributor(eng_h, "Хаб")
+    _set_warehouse_format(eng_h, co_h.id, "hub")
+    eng_h.state.decisions[co_h.id] = CompanyDecision(logistics_capacity_units=1_000)
+    result_h = eng_h.close_day()
+    rev_hub = next(r.revenue_rub for r in result_h.reports if r.company_id == co_h.id)
+
+    assert rev_hub > rev_depot, (
+        f"Хаб должен зарабатывать больше склада: {rev_hub} <= {rev_depot}"
+    )
+
+
 def test_facility_formats_endpoint_lists_tiers() -> None:
     client = TestClient(app)
 

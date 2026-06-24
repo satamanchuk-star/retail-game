@@ -935,6 +935,19 @@ class GameEngine:
                 )
             )
 
+    def _warehouse_rate_multiplier(self, company_id: str) -> float:
+        """Взвешенный по мощности мультипликатор ставки доставки складов компании."""
+        warehouses = self._company_assets(company_id, AssetType.WAREHOUSE)
+        total_cap = sum(w.capacity_units_per_day for w in warehouses)
+        if not warehouses or not total_cap:
+            return 1.0
+        presets = FACILITY_FORMATS[AssetType.WAREHOUSE]
+        return sum(
+            w.capacity_units_per_day
+            * presets.get(w.facility_format, presets[WarehouseFormat.CENTER.value]).output_multiplier
+            for w in warehouses
+        ) / total_cap
+
     def _factory_output_multiplier(self, company_id: str) -> float:
         """Взвешенный по мощности мультипликатор выхода продукции заводов компании."""
         factories = self._company_assets(company_id, AssetType.FACTORY)
@@ -1128,11 +1141,12 @@ class GameEngine:
             if company.role != Role.DISTRIBUTOR:
                 continue
             decision = self.state.decisions.get(company.id, CompanyDecision())
+            rate_mult = self._warehouse_rate_multiplier(company.id)
             delivered = min(
                 decision.logistics_capacity_units,
                 self._daily_capacity(company.id, AssetType.WAREHOUSE, 4_000),
             )
-            revenue = delivered * 18
+            revenue = int(delivered * 18 * rate_mult)
             costs = delivered * 9 + self._fixed_costs(
                 company.id, AssetType.WAREHOUSE, 45_000
             )
