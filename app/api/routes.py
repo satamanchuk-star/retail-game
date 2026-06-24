@@ -2,6 +2,7 @@
 
 from typing import Annotated
 
+from app.api.ws_manager import ConnectionManager
 from app.core.config import settings
 from app.domain.auth import AuthService
 from app.domain.balance import FACILITY_FORMATS, STORE_FORMATS
@@ -20,18 +21,28 @@ from app.domain.models import (
     DayClosureRecord,
     DayClosureRequest,
     DayResult,
+    DeliveryOrder,
+    DeliveryOrderCreate,
     DemoRunResult,
     FacilityBuildRequest,
     FacilityOption,
     FacilityUpgradeRequest,
     FinancialReport,
+    GameState,
     Loan,
     LoanCreate,
+    MarketEvent,
+    MarketListing,
+    MarketListingCreate,
+    MarketPurchaseCreate,
     PersistenceStatus,
+    PricePoint,
     ProjectStatus,
     PublicGameState,
     PublicUser,
     RatingBoard,
+    SessionCreate,
+    SessionInfo,
     StoreBuildRequest,
     StoreFormatOption,
     StoreUpgradeRequest,
@@ -42,17 +53,29 @@ from app.domain.models import (
 )
 from app.domain.project_status import build_project_status
 from app.domain.ratings import build_rating_board
+from app.domain.session_registry import GameSession, SessionRegistry
 from app.services.database_store import DatabaseSnapshotStore
 from app.services.state_store import StateStore
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Header,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 router = APIRouter(prefix="/api", tags=["game"])
 
 _store = StateStore(settings.state_file_path)
 _db_store = DatabaseSnapshotStore(settings.database_url)
+_registry = SessionRegistry()
+_ws = ConnectionManager()
 _state = _store.load_or_create()
 _engine = GameEngine(_state)
 _auth = AuthService(_state)
+_registry.init_default(_engine)
 
 
 async def initialize_storage() -> None:
@@ -64,6 +87,7 @@ async def initialize_storage() -> None:
     _state = await _db_store.load_or_create()
     _engine = GameEngine(_state)
     _auth = AuthService(_state)
+    _registry.init_default(_engine)
 
 
 async def shutdown_storage() -> None:
@@ -107,9 +131,12 @@ def get_required_user(user: OptionalUser) -> User:
     return user
 
 
-def _ensure_can_manage_company(company_id: str, user: User | None) -> None:
+def _ensure_can_manage_company(
+    company_id: str, user: User | None, state: GameState | None = None
+) -> None:
     """Запретить управление чужой компанией, не ломая старые unowned-компании."""
-    company = next((item for item in _state.companies if item.id == company_id), None)
+    s = state if state is not None else _state
+    company = next((item for item in s.companies if item.id == company_id), None)
     if company is None:
         raise HTTPException(status_code=404, detail="Компания не найдена")
     if company.owner_user_id is not None and (
@@ -119,10 +146,11 @@ def _ensure_can_manage_company(company_id: str, user: User | None) -> None:
 
 
 def _ensure_can_create_contract(
-    seller_id: str, buyer_id: str, user: User | None
+    seller_id: str, buyer_id: str, user: User | None, state: GameState | None = None
 ) -> None:
     """Разрешить контракт, если игрок владеет хотя бы одной защищённой стороной."""
-    parties = [item for item in _state.companies if item.id in {seller_id, buyer_id}]
+    s = state if state is not None else _state
+    parties = [item for item in s.companies if item.id in {seller_id, buyer_id}]
     owned_parties = [item for item in parties if item.owner_user_id is not None]
     if not owned_parties:
         return
@@ -418,6 +446,7 @@ async def reset_state() -> PublicGameState:
         _state = _store.reset()
     _engine = GameEngine(_state)
     _auth = AuthService(_state)
+    _registry.init_default(_engine)
     return _state.to_public()
 
 
@@ -481,3 +510,341 @@ async def get_database_status() -> DatabaseStatus:
 async def get_project_status() -> ProjectStatus:
     """Показать текущую стадию разработки и оставшиеся крупные этапы."""
     return build_project_status()
+
+
+# ---------------------------------------------------------------------------
+# Session management — мультиплеер: несколько изолированных игровых миров
+# ---------------------------------------------------------------------------
+
+def _get_session_or_404(session_id: str) -> GameSession:
+    try:
+        return _registry.get(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Сессия '{session_id}' не найдена") from None
+
+
+@router.get("/sessions", response_model=list[SessionInfo])
+async def list_sessions() -> list[SessionInfo]:
+    """Вернуть все активные игровые сессии."""
+    return [s.to_info() for s in _registry.list_all()]
+
+
+@router.post("/sessions", response_model=SessionInfo, status_code=201)
+async def create_session(payload: SessionCreate) -> SessionInfo:
+    """Создать новую изолированную игровую сессию с чистым состоянием мира."""
+    session = _registry.create(payload.name)
+    return session.to_info()
+
+
+@router.get("/sessions/{session_id}", response_model=SessionInfo)
+async def get_session_info(session_id: str) -> SessionInfo:
+    """Вернуть сводку по конкретной сессии."""
+    return _get_session_or_404(session_id).to_info()
+
+
+@router.get("/sessions/{session_id}/state", response_model=PublicGameState)
+async def get_session_state(session_id: str) -> PublicGameState:
+    """Вернуть публичный снимок игрового мира выбранной сессии."""
+    return _get_session_or_404(session_id).state.to_public()
+
+
+@router.post("/sessions/{session_id}/close-day", response_model=WorldDayResult)
+async def session_close_day(
+    session_id: str,
+    payload: Annotated[DayClosureRequest | None, Body()] = None,
+) -> WorldDayResult:
+    """Закрыть день в выбранной сессии и оповестить подключённых игроков."""
+    session = _get_session_or_404(session_id)
+    result = session.engine.close_day(payload.closure_id if payload else None)
+    session.readiness.reset()
+    await _ws.broadcast(session_id, {
+        "event": "day_closed",
+        "day": result.day,
+        "news": result.news,
+    })
+    return result
+
+
+@router.post("/sessions/{session_id}/reset", response_model=SessionInfo)
+async def reset_session(session_id: str) -> SessionInfo:
+    """Сбросить выбранную сессию к начальному состоянию."""
+    if session_id == SessionRegistry.DEFAULT_ID:
+        raise HTTPException(
+            status_code=400, detail="Используйте /api/reset для основной сессии"
+        )
+    session = _get_session_or_404(session_id)
+    return _registry.reset_session(session.id).to_info()
+
+
+@router.delete("/sessions/{session_id}", response_model=SessionInfo)
+async def delete_session(session_id: str) -> SessionInfo:
+    """Удалить сессию. Основную сессию удалить нельзя."""
+    session = _get_session_or_404(session_id)
+    info = session.to_info()
+    try:
+        _registry.delete(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return info
+
+
+@router.post(
+    "/sessions/{session_id}/companies",
+    response_model=Company,
+    status_code=201,
+)
+async def session_create_company(
+    session_id: str,
+    payload: CompanyCreate,
+    user: OptionalUser,
+) -> Company:
+    """Создать компанию в выбранной сессии и зарегистрировать её в трекере."""
+    session = _get_session_or_404(session_id)
+    try:
+        company = session.engine.create_company(
+            payload, owner_user_id=user.id if user else None
+        )
+        if company.owner_user_id:
+            session.readiness.register(company.id)
+        return company
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/sessions/{session_id}/decisions/{company_id}",
+    response_model=CompanyDecision,
+)
+async def session_set_decision(
+    session_id: str,
+    company_id: str,
+    payload: CompanyDecision,
+    user: OptionalUser,
+) -> CompanyDecision:
+    """Отправить решение; если все игроки готовы — день закрывается автоматически."""
+    session = _get_session_or_404(session_id)
+    _ensure_can_manage_company(company_id, user, session.state)
+    try:
+        decision = session.engine.set_decision(company_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    session.readiness.submit(company_id)
+    ready = session.readiness.ready_count
+    total = session.readiness.total_count
+    await _ws.broadcast(session_id, {
+        "event": "player_submitted",
+        "company_id": company_id,
+        "ready": ready,
+        "total": total,
+    })
+
+    if session.readiness.all_ready:
+        result = session.engine.close_day()
+        session.readiness.reset()
+        await _ws.broadcast(session_id, {
+            "event": "day_closed",
+            "day": result.day,
+            "news": result.news,
+        })
+
+    return decision
+
+
+@router.get(
+    "/sessions/{session_id}/market",
+    response_model=list[MarketListing],
+)
+async def session_list_market(session_id: str) -> list[MarketListing]:
+    """Вернуть все активные лоты на рынке этой сессии."""
+    session = _get_session_or_404(session_id)
+    return [lst for lst in session.state.market_listings if lst.is_active]
+
+
+@router.post(
+    "/sessions/{session_id}/companies/{company_id}/listings",
+    response_model=MarketListing,
+    status_code=201,
+)
+async def session_create_listing(
+    session_id: str,
+    company_id: str,
+    payload: MarketListingCreate,
+    user: OptionalUser,
+) -> MarketListing:
+    """Разместить лот: продавец выставляет товар по заданной цене."""
+    session = _get_session_or_404(session_id)
+    _ensure_can_manage_company(company_id, user, session.state)
+    try:
+        return session.engine.create_listing(
+            company_id,
+            payload.product_id,
+            payload.quantity,
+            payload.price_rub_per_unit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/sessions/{session_id}/listings/{listing_id}",
+    response_model=MarketListing,
+)
+async def session_cancel_listing(
+    session_id: str,
+    listing_id: str,
+    user: OptionalUser,
+) -> MarketListing:
+    """Отозвать лот с рынка (только продавец этого лота)."""
+    session = _get_session_or_404(session_id)
+    try:
+        listing = session.engine._require_listing(listing_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _ensure_can_manage_company(listing.seller_id, user, session.state)
+    try:
+        return session.engine.cancel_listing(listing_id, listing.seller_id)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/sessions/{session_id}/listings/{listing_id}/purchase",
+    response_model=MarketListing,
+)
+async def session_purchase_listing(
+    session_id: str,
+    listing_id: str,
+    payload: MarketPurchaseCreate,
+    user: OptionalUser,
+) -> MarketListing:
+    """Купить товар из лота: деньги и товар переходят мгновенно."""
+    session = _get_session_or_404(session_id)
+    _ensure_can_manage_company(payload.buyer_company_id, user, session.state)
+    try:
+        _cost, listing = session.engine.purchase_listing(
+            listing_id, payload.buyer_company_id, payload.quantity
+        )
+        return listing
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/prices", response_model=list[PricePoint])
+async def session_price_history(
+    session_id: str,
+    product_id: str | None = None,
+    region_id: str | None = None,
+) -> list[PricePoint]:
+    """История средневзвешенных цен продажи. Фильтры: product_id, region_id."""
+    session = _registry.get(session_id)
+    pts = session.state.price_history
+    if product_id:
+        pts = [p for p in pts if p.product_id == product_id]
+    if region_id:
+        pts = [p for p in pts if p.region_id == region_id]
+    return pts
+
+
+@router.get("/sessions/{session_id}/market-events", response_model=list[MarketEvent])
+async def session_market_events(session_id: str) -> list[MarketEvent]:
+    """Все рыночные события сессии (активные и истёкшие)."""
+    session = _registry.get(session_id)
+    return session.state.market_events
+
+
+@router.get(
+    "/sessions/{session_id}/delivery-orders",
+    response_model=list[DeliveryOrder],
+)
+async def session_list_delivery_orders(session_id: str) -> list[DeliveryOrder]:
+    """Вернуть все заявки на доставку в сессии."""
+    session = _registry.get(session_id)
+    return session.state.delivery_orders
+
+
+@router.post(
+    "/sessions/{session_id}/companies/{company_id}/delivery-orders",
+    response_model=DeliveryOrder,
+    status_code=201,
+)
+async def session_create_delivery_order(
+    session_id: str,
+    company_id: str,
+    payload: DeliveryOrderCreate,
+    user: Annotated[User, Depends(get_required_user)],
+) -> DeliveryOrder:
+    """Грузоотправитель создаёт заявку на доставку."""
+    session = _registry.get(session_id)
+    _ensure_can_manage_company(company_id, user, session.state)
+    try:
+        return session.engine.create_delivery_order(company_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/sessions/{session_id}/delivery-orders/{order_id}/accept",
+    response_model=DeliveryOrder,
+)
+async def session_accept_delivery_order(
+    session_id: str,
+    order_id: str,
+    distributor_company_id: str,
+    user: Annotated[User, Depends(get_required_user)],
+) -> DeliveryOrder:
+    """Дистрибьютор принимает pending-заявку на себя."""
+    session = _registry.get(session_id)
+    _ensure_can_manage_company(distributor_company_id, user, session.state)
+    try:
+        return session.engine.accept_delivery_order(order_id, distributor_company_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/sessions/{session_id}/delivery-orders/{order_id}",
+    response_model=DeliveryOrder,
+)
+async def session_cancel_delivery_order(
+    session_id: str,
+    order_id: str,
+    shipper_company_id: str,
+    user: Annotated[User, Depends(get_required_user)],
+) -> DeliveryOrder:
+    """Грузоотправитель отменяет ещё не исполненную заявку."""
+    session = _registry.get(session_id)
+    _ensure_can_manage_company(shipper_company_id, user, session.state)
+    try:
+        return session.engine.cancel_delivery_order(order_id, shipper_company_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.websocket("/ws/sessions/{session_id}")
+async def session_websocket(websocket: WebSocket, session_id: str) -> None:
+    """WebSocket: события сессии в реальном времени (day_closed, player_submitted)."""
+    try:
+        session = _registry.get(session_id)
+    except KeyError:
+        await websocket.accept()
+        await websocket.close(code=4004)
+        return
+
+    await _ws.connect(session_id, websocket)
+    try:
+        await websocket.send_json({
+            "event": "connected",
+            "session_id": session_id,
+            "day": session.state.day,
+            "players_ready": session.readiness.ready_count,
+            "players_total": session.readiness.total_count,
+        })
+        while True:
+            data = await websocket.receive_json()
+            if data.get("action") == "ping":
+                await websocket.send_json({"event": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _ws.disconnect(session_id, websocket)

@@ -49,6 +49,20 @@ def test_factory_capacity_limits_production() -> None:
     assert producer_report.produced_units == 120
 
 
+def test_backfill_infers_store_format_for_legacy_asset() -> None:
+    """GameEngine.__init__ заполняет store_format=None у устаревших активов."""
+    from app.domain.models import AssetType
+
+    state = build_initial_state()
+    player_store = next(a for a in state.assets if a.asset_type == AssetType.STORE)
+    player_store.store_format = None
+
+    engine = GameEngine(state)
+
+    filled = next(a for a in engine.state.assets if a.id == player_store.id)
+    assert filled.store_format is not None
+
+
 def test_assets_api_exposes_operational_objects() -> None:
     client = TestClient(app)
 

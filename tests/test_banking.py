@@ -40,3 +40,24 @@ def test_close_day_accrues_loan_interest() -> None:
 
     assert state.loans[0].accrued_interest_rub > 0
     assert player_report.costs_rub >= state.loans[0].accrued_interest_rub
+
+
+def test_loan_defaults_after_term_expires() -> None:
+    """Кредит помечается просроченным после истечения срока (term_days=7)."""
+    state = build_initial_state()
+    engine = GameEngine(state)
+    loan = engine.issue_loan(
+        LoanCreate(
+            company_id="player",
+            bank_id="steady_bank",
+            principal_rub=500_000,
+            term_days=7,
+        )
+    )
+    assert not loan.is_defaulted
+
+    # 8 closes: on day 8 the condition state.day+1 > 0+7 becomes True
+    for _ in range(8):
+        engine.close_day()
+
+    assert loan.is_defaulted

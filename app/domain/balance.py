@@ -430,6 +430,14 @@ PRODUCTION_RECIPES: list[ProductionRecipe] = [
         ],
         conversion_cost_rub=9,
     ),
+    ProductionRecipe(
+        product_id="yogurt",
+        inputs=[
+            RecipeInput(raw_material_id="raw_milk", quantity_per_unit=0.9),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.10),
+        ],
+        conversion_cost_rub=12,
+    ),
 ]
 
 STARTER_COMPANIES: list[Company] = [
@@ -454,6 +462,14 @@ STARTER_COMPANIES: list[Company] = [
         role=Role.DISTRIBUTOR,
         region_id="north",
         cash_rub=22_000_000,
+        is_npc=True,
+    ),
+    Company(
+        id="npc_retailer",
+        name="Меркурий-ритейл",
+        role=Role.RETAILER,
+        region_id="south",
+        cash_rub=8_000_000,
         is_npc=True,
     ),
 ]
@@ -495,6 +511,18 @@ INITIAL_ASSETS: list[BusinessAsset] = [
         quality_level=1.0,
         facility_format=WarehouseFormat.CENTER.value,
     ),
+    BusinessAsset(
+        id="asset_npc_retailer_store",
+        company_id="npc_retailer",
+        asset_type=AssetType.STORE,
+        name="Магазин «Меркурий» на юге",
+        region_id="south",
+        capacity_units_per_day=1_800,
+        fixed_cost_rub_per_day=85_000,
+        storage_type="смешанное",
+        quality_level=1.0,
+        store_format=StoreFormat.CONVENIENCE,
+    ),
 ]
 
 INITIAL_INVENTORIES: dict[str, dict[str, int]] = {
@@ -515,6 +543,12 @@ INITIAL_INVENTORIES: dict[str, dict[str, int]] = {
         "bread": 1_200,
         "milk": 1_000,
         "water": 2_500,
+    },
+    "npc_retailer": {
+        "bread": 800,
+        "milk": 700,
+        "eggs": 400,
+        "water": 600,
     },
 }
 

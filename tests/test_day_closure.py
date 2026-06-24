@@ -34,7 +34,7 @@ def test_close_day_records_audit_operations() -> None:
     assert {operation.step for operation in result.operations} >= {
         "production",
         "retail_sale",
-        "logistics_delivery",
+        "financial_accounting",
     }
 
 
