@@ -933,6 +933,18 @@ class GameEngine:
                 )
             )
 
+    def _store_demand_multiplier(self, company_id: str) -> float:
+        """Взвешенный по мощности мультипликатор спроса для форматов магазинов."""
+        stores = self._company_assets(company_id, AssetType.STORE)
+        total_cap = sum(s.capacity_units_per_day for s in stores)
+        if not stores or not total_cap:
+            return 1.0
+        return sum(
+            s.capacity_units_per_day
+            * STORE_FORMATS.get(s.store_format, STORE_FORMATS[StoreFormat.CONVENIENCE]).demand_multiplier
+            for s in stores
+        ) / total_cap
+
     def _apply_retail_sales(
         self,
         reports: dict[str, CompanyDayReport],
@@ -945,12 +957,14 @@ class GameEngine:
             region = self._require_region(company.region_id)
             decision = self.state.decisions.get(company.id, CompanyDecision())
             inventory = self.state.inventories.setdefault(company.id, {})
+            fmt_mult = self._store_demand_multiplier(company.id)
             for product_id, available in list(inventory.items()):
                 product = product_by_id[product_id]
                 demand = int(
                     product.base_daily_demand
                     * region.demand_index
                     * (1.08 if decision.marketing_budget_rub else 1.0)
+                    * fmt_mult
                     / decision.target_price_index
                 )
                 remaining_capacity = max(

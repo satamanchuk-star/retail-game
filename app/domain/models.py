@@ -150,6 +150,7 @@ class StoreFormatOption(BaseModel):
     fixed_cost_rub_per_day: int = Field(ge=0)
     build_cost_rub: int = Field(gt=0)
     storage_type: str
+    demand_multiplier: float = Field(default=1.0, gt=0)
 
 
 class StoreBuildRequest(BaseModel):

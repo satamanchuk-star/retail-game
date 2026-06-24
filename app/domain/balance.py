@@ -26,6 +26,7 @@ STORE_FORMATS: dict[StoreFormat, StoreFormatOption] = {
         fixed_cost_rub_per_day=25_000,
         build_cost_rub=1_200_000,
         storage_type="сухое",
+        demand_multiplier=0.7,
     ),
     StoreFormat.CONVENIENCE: StoreFormatOption(
         store_format=StoreFormat.CONVENIENCE,
@@ -34,6 +35,7 @@ STORE_FORMATS: dict[StoreFormat, StoreFormatOption] = {
         fixed_cost_rub_per_day=75_000,
         build_cost_rub=4_500_000,
         storage_type="смешанное",
+        demand_multiplier=1.0,
     ),
     StoreFormat.SUPERMARKET: StoreFormatOption(
         store_format=StoreFormat.SUPERMARKET,
@@ -42,6 +44,7 @@ STORE_FORMATS: dict[StoreFormat, StoreFormatOption] = {
         fixed_cost_rub_per_day=180_000,
         build_cost_rub=14_000_000,
         storage_type="смешанное",
+        demand_multiplier=1.5,
     ),
 }
 

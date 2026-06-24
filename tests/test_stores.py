@@ -129,6 +129,51 @@ def test_close_last_store_rejected() -> None:
         engine.close_store(company.id, store.id)
 
 
+def test_supermarket_sells_more_than_kiosk() -> None:
+    """Супермаркет (×1.5 спрос) продаёт больше, чем киоск (×0.7) при равных остатках."""
+    from app.domain.models import CompanyDecision
+
+    def _make_retailer(engine: GameEngine, name: str, region: str) -> object:
+        return engine.create_company(
+            CompanyCreate(name=name, role=Role.RETAILER, region_id=region)
+        )
+
+    state_kiosk = build_initial_state()
+    eng_kiosk = GameEngine(state_kiosk)
+    kiosk_co = _make_retailer(eng_kiosk, "Киоск-сеть", "central")
+    # replace starter convenience store with kiosk
+    starter = next(
+        a for a in eng_kiosk.state.assets if a.company_id == kiosk_co.id
+    )
+    starter.store_format = StoreFormat.KIOSK
+    starter.capacity_units_per_day = STORE_FORMATS[StoreFormat.KIOSK].capacity_units_per_day
+    eng_kiosk.state.inventories[kiosk_co.id] = {"bread": 10_000}
+    eng_kiosk.state.decisions[kiosk_co.id] = CompanyDecision()
+    result_kiosk = eng_kiosk.close_day()
+    sold_kiosk = next(
+        r.sold_units for r in result_kiosk.reports if r.company_id == kiosk_co.id
+    )
+
+    state_super = build_initial_state()
+    eng_super = GameEngine(state_super)
+    super_co = _make_retailer(eng_super, "Супер-сеть", "central")
+    starter2 = next(
+        a for a in eng_super.state.assets if a.company_id == super_co.id
+    )
+    starter2.store_format = StoreFormat.SUPERMARKET
+    starter2.capacity_units_per_day = STORE_FORMATS[StoreFormat.SUPERMARKET].capacity_units_per_day
+    eng_super.state.inventories[super_co.id] = {"bread": 10_000}
+    eng_super.state.decisions[super_co.id] = CompanyDecision()
+    result_super = eng_super.close_day()
+    sold_super = next(
+        r.sold_units for r in result_super.reports if r.company_id == super_co.id
+    )
+
+    assert sold_super > sold_kiosk, (
+        f"Супермаркет должен продавать больше киоска: {sold_super} <= {sold_kiosk}"
+    )
+
+
 def test_store_formats_endpoint_lists_presets() -> None:
     client = TestClient(app)
 
