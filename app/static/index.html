@@ -122,6 +122,43 @@
       <div class="map" id="map"></div>
     </section>
 
+    <section class="panel">
+      <div class="panel-title">
+        <h2>Рыночные события</h2>
+        <span id="events-count" class="muted">Загружаем...</span>
+      </div>
+      <p class="muted">Случайные шоки спроса и предложения с датой истечения. Влияют на пул спроса ритейлеров.</p>
+      <div id="market-events"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>История цен</h2>
+        <span class="muted">Средневзвешенная цена и объём после закрытия дня</span>
+      </div>
+      <div class="form-grid" style="margin-bottom:12px">
+        <select id="price-product-filter"><option value="">Все товары</option></select>
+        <select id="price-region-filter"><option value="">Все регионы</option></select>
+      </div>
+      <div id="price-history"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Заявки дистрибьютора</h2>
+      <p class="muted">Грузоотправитель создаёт заявку; указанный дистрибьютор принимает её и выполняет при закрытии дня.</p>
+      <form id="delivery-order-form" class="form-grid">
+        <select name="shipper_id" id="do-shipper-select"></select>
+        <select name="distributor_id" id="do-distributor-select"></select>
+        <select name="receiver_id" id="do-receiver-select"></select>
+        <select name="product_id" id="do-product-select"></select>
+        <label>Количество <input name="quantity" type="number" min="1" max="500000" value="500" /></label>
+        <label>Тариф ₽/ед. <input name="fee_rub_per_unit" type="number" min="0" max="10000000" value="10" /></label>
+        <label>День исполнения <input name="due_day" id="do-due-day" type="number" min="1" value="1" /></label>
+        <button type="submit">Создать заявку</button>
+      </form>
+      <div id="delivery-orders-list"></div>
+    </section>
+
     <section class="grid two">
       <article class="panel">
         <h2>Компании и отчёты</h2>

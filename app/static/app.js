@@ -41,6 +41,21 @@ const facilityListRoot = document.querySelector('#facility-list');
 let lastState = null;
 let lastStoreFormats = [];
 let lastFacilityFormats = [];
+// Новые панели (итерации 3–4)
+const marketEventsRoot = document.querySelector('#market-events');
+const eventsCountRoot = document.querySelector('#events-count');
+const priceHistoryRoot = document.querySelector('#price-history');
+const priceProductFilter = document.querySelector('#price-product-filter');
+const priceRegionFilter = document.querySelector('#price-region-filter');
+const deliveryOrdersListRoot = document.querySelector('#delivery-orders-list');
+const deliveryOrderForm = document.querySelector('#delivery-order-form');
+const doShipperSelect = document.querySelector('#do-shipper-select');
+const doDistributorSelect = document.querySelector('#do-distributor-select');
+const doReceiverSelect = document.querySelector('#do-receiver-select');
+const doProductSelect = document.querySelector('#do-product-select');
+const doDueDayInput = document.querySelector('#do-due-day');
+let lastMarketEvents = [];
+let lastPriceHistory = [];
 const demoSummary = document.querySelector('#demo-summary');
 const profitChart = document.querySelector('#profit-chart');
 const demoTable = document.querySelector('#demo-table');
@@ -378,20 +393,131 @@ function renderStoreList() {
   }).join('');
 }
 
+// ─── Рыночные события ────────────────────────────────────────────────────────
+
+function renderMarketEvents(events, currentDay) {
+  const active = events.filter((e) => e.expires_day >= currentDay);
+  const expired = events.filter((e) => e.expires_day < currentDay);
+  eventsCountRoot.textContent = `активных: ${active.length} · истекших: ${expired.length}`;
+  if (!events.length) {
+    marketEventsRoot.innerHTML = '<p class="muted">Рыночных событий пока нет. Они появляются с вероятностью 15% при закрытии дня.</p>';
+    return;
+  }
+  const eventTypeLabel = { demand_shock: 'Шок спроса', supply_disruption: 'Сбой поставок' };
+  marketEventsRoot.innerHTML = [...active, ...expired].map((event) => {
+    const isActive = event.expires_day >= currentDay;
+    const badge = isActive ? '<span class="badge active">активно</span>' : '<span class="badge expired">истекло</span>';
+    const scope = [event.region_id, event.product_id].filter(Boolean).join(' · ') || 'весь рынок';
+    return `<div class="market-event ${isActive ? '' : 'dimmed'}"><div class="event-header">${badge}<b>${eventTypeLabel[event.event_type] || event.event_type}</b><small>День ${event.day}–${event.expires_day} · ${scope}</small></div><span class="event-magnitude">${event.magnitude >= 1 ? '+' : ''}${Math.round((event.magnitude - 1) * 100)}%</span><p>${event.description}</p></div>`;
+  }).join('');
+}
+
+// ─── История цен ─────────────────────────────────────────────────────────────
+
+function renderPriceHistory(pts, state) {
+  const productFilter = priceProductFilter.value;
+  const regionFilter = priceRegionFilter.value;
+  const filtered = pts
+    .filter((p) => (!productFilter || p.product_id === productFilter) && (!regionFilter || p.region_id === regionFilter))
+    .slice()
+    .sort((a, b) => b.day - a.day || a.region_id.localeCompare(b.region_id));
+
+  // Заполняем фильтры при первом рендере
+  if (!priceProductFilter.options.length || priceProductFilter.options[0].value === '') {
+    const products = [...new Set(pts.map((p) => p.product_id))].sort();
+    priceProductFilter.innerHTML = '<option value="">Все товары</option>' +
+      products.map((id) => {
+        const name = state.products.find((pr) => pr.id === id)?.name || id;
+        return `<option value="${id}">${name}</option>`;
+      }).join('');
+    const regions = [...new Set(pts.map((p) => p.region_id))].sort();
+    priceRegionFilter.innerHTML = '<option value="">Все регионы</option>' +
+      regions.map((id) => {
+        const name = state.regions.find((r) => r.id === id)?.name || id;
+        return `<option value="${id}">${name}</option>`;
+      }).join('');
+  }
+
+  if (!filtered.length) {
+    priceHistoryRoot.innerHTML = '<p class="muted">История цен появится после первого закрытия дня.</p>';
+    return;
+  }
+  priceHistoryRoot.innerHTML = `<table class="price-table"><thead><tr><th>День</th><th>Регион</th><th>Товар</th><th>Ср. цена</th><th>Продано</th></tr></thead><tbody>${
+    filtered.slice(0, 30).map((p) => {
+      const productName = state.products.find((pr) => pr.id === p.product_id)?.name || p.product_id;
+      const regionName = state.regions.find((r) => r.id === p.region_id)?.name || p.region_id;
+      return `<tr><td>${p.day}</td><td>${regionName}</td><td>${productName}</td><td>${formatRub.format(p.avg_price_rub)}</td><td>${p.total_units_sold}</td></tr>`;
+    }).join('')
+  }</tbody></table>`;
+}
+
+// ─── Заявки дистрибьютора ────────────────────────────────────────────────────
+
+function renderDeliveryOrderSelectors(state) {
+  const all = state.companies.map((c) => `<option value="${c.id}">${c.name} · ${roleLabel(c.role)}</option>`).join('');
+  const distributors = state.companies.filter((c) => c.role === 'distributor')
+    .map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
+  doShipperSelect.innerHTML = all;
+  doDistributorSelect.innerHTML = distributors || '<option value="">Нет дистрибьюторов</option>';
+  doReceiverSelect.innerHTML = all;
+  doProductSelect.innerHTML = state.products.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  doDueDayInput.value = state.day + 1;
+  doDueDayInput.min = state.day + 1;
+}
+
+function renderDeliveryOrders(orders, state) {
+  if (!orders.length) {
+    deliveryOrdersListRoot.innerHTML = '<p class="muted">Заявок пока нет.</p>';
+    return;
+  }
+  const companies = new Map(state.companies.map((c) => [c.id, c]));
+  const products = new Map(state.products.map((p) => [p.id, p]));
+  const statusLabel = { pending: 'ожидает', accepted: 'принята', fulfilled: 'выполнена', cancelled: 'отменена' };
+  const sorted = [...orders].sort((a, b) => b.created_day - a.created_day);
+  deliveryOrdersListRoot.innerHTML = sorted.map((order) => {
+    const productName = products.get(order.product_id)?.name || order.product_id;
+    const shipperName = companies.get(order.shipper_id)?.name || order.shipper_id;
+    const distName = companies.get(order.distributor_id)?.name || order.distributor_id;
+    const receiverName = companies.get(order.receiver_id)?.name || order.receiver_id;
+    const canAccept = order.status === 'pending';
+    const canCancel = order.status === 'pending' || order.status === 'accepted';
+    const acceptBtn = canAccept
+      ? `<button type="button" class="secondary" data-do-action="accept" data-order-id="${order.id}" data-dist-id="${order.distributor_id}">Принять</button>`
+      : '';
+    const cancelBtn = canCancel
+      ? `<button type="button" class="ghost" data-do-action="cancel" data-order-id="${order.id}" data-shipper-id="${order.shipper_id}">Отменить</button>`
+      : '';
+    return `<div class="delivery-order status-${order.status}">
+      <div class="do-header"><b>${productName} · ${order.quantity} ед.</b><span class="badge status-${order.status}">${statusLabel[order.status] || order.status}</span></div>
+      <small>${shipperName} → <em>${distName}</em> → ${receiverName}</small>
+      <span>${formatRub.format(order.fee_rub_per_unit)}/ед. · день исп.: ${order.due_day} · создана: день ${order.created_day}</span>
+      <div class="do-actions">${acceptBtn}${cancelBtn}</div>
+    </div>`;
+  }).join('');
+}
+
 async function render() {
-  const state = await fetchState();
-  const ratings = await fetchRatings();
-  const persistenceStatus = await fetchPersistenceStatus();
-  const databaseStatus = await fetchDatabaseStatus();
-  const projectStatus = await fetchProjectStatus();
-  const dayClosures = await fetchDayClosures();
-  const finances = await fetchFinances();
-  const storeFormats = await fetchStoreFormats();
-  const facilityFormats = await fetchFacilityFormats();
+  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory] = await Promise.all([
+    fetchState(),
+    fetchRatings(),
+    fetchPersistenceStatus(),
+    fetchDatabaseStatus(),
+    fetchProjectStatus(),
+    fetchDayClosures(),
+    fetchFinances(),
+    fetchStoreFormats(),
+    fetchFacilityFormats(),
+    api('/api/market-events'),
+    api('/api/prices'),
+  ]);
+  lastState = state;
+  lastMarketEvents = marketEvents;
+  lastPriceHistory = priceHistory;
   renderMetrics(state);
   renderSelectors(state);
   renderStoreControls(state, storeFormats);
   renderFacilityControls(state, facilityFormats);
+  renderDeliveryOrderSelectors(state);
   renderMap(state.regions);
   renderProducts(state.products);
   renderAssets(state);
@@ -407,6 +533,9 @@ async function render() {
   renderDatabaseStatus(databaseStatus);
   renderProjectStatus(projectStatus);
   renderDayClosures(dayClosures);
+  renderMarketEvents(marketEvents, state.day + 1);
+  renderPriceHistory(priceHistory, state);
+  renderDeliveryOrders(state.delivery_orders || [], state);
   renderAuthStatus();
   renderNews(state.news);
 }
@@ -588,6 +717,55 @@ resetButton.addEventListener('click', async () => {
   profitChart.innerHTML = '';
   demoTable.innerHTML = '';
   await render();
+});
+
+// ─── Заявки: создать ────────────────────────────────────────────────────────
+
+deliveryOrderForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = new FormData(deliveryOrderForm);
+  const shipperId = form.get('shipper_id');
+  const payload = {
+    distributor_id: form.get('distributor_id'),
+    receiver_id: form.get('receiver_id'),
+    product_id: form.get('product_id'),
+    quantity: Number(form.get('quantity')),
+    fee_rub_per_unit: Number(form.get('fee_rub_per_unit')),
+    due_day: Number(form.get('due_day')),
+  };
+  try {
+    await api(`/api/companies/${shipperId}/delivery-orders`, { method: 'POST', body: JSON.stringify(payload) });
+    await render();
+  } catch (error) {
+    newsRoot.innerHTML = `<li>${error.message}</li>`;
+  }
+});
+
+// ─── Заявки: принять / отменить ─────────────────────────────────────────────
+
+deliveryOrdersListRoot.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-do-action]');
+  if (!button) return;
+  const { doAction, orderId, distId, shipperId } = button.dataset;
+  try {
+    if (doAction === 'accept') {
+      await api(`/api/delivery-orders/${orderId}/accept?distributor_company_id=${distId}`, { method: 'POST' });
+    } else if (doAction === 'cancel') {
+      await api(`/api/delivery-orders/${orderId}?shipper_company_id=${shipperId}`, { method: 'DELETE' });
+    }
+    await render();
+  } catch (error) {
+    newsRoot.innerHTML = `<li>${error.message}</li>`;
+  }
+});
+
+// ─── Фильтры истории цен ────────────────────────────────────────────────────
+
+priceProductFilter.addEventListener('change', () => {
+  if (lastState && lastPriceHistory) renderPriceHistory(lastPriceHistory, lastState);
+});
+priceRegionFilter.addEventListener('change', () => {
+  if (lastState && lastPriceHistory) renderPriceHistory(lastPriceHistory, lastState);
 });
 
 render().catch((error) => {

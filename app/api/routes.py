@@ -473,6 +473,80 @@ async def get_company_finance(company_id: str) -> FinancialReport:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/delivery-orders", response_model=list[DeliveryOrder])
+async def list_delivery_orders() -> list[DeliveryOrder]:
+    """Вернуть все заявки на доставку в глобальном состоянии."""
+    return _state.delivery_orders
+
+
+@router.post("/companies/{company_id}/delivery-orders", response_model=DeliveryOrder, status_code=201)
+async def create_delivery_order(
+    company_id: str,
+    payload: DeliveryOrderCreate,
+    user: Annotated[User, Depends(get_required_user)],
+) -> DeliveryOrder:
+    """Грузоотправитель создаёт заявку на доставку."""
+    _ensure_can_manage_company(company_id, user, _state)
+    try:
+        order = _engine.create_delivery_order(company_id, payload)
+        await _save_state()
+        return order
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/delivery-orders/{order_id}/accept", response_model=DeliveryOrder)
+async def accept_delivery_order(
+    order_id: str,
+    distributor_company_id: str,
+    user: Annotated[User, Depends(get_required_user)],
+) -> DeliveryOrder:
+    """Дистрибьютор принимает pending-заявку на себя."""
+    _ensure_can_manage_company(distributor_company_id, user, _state)
+    try:
+        order = _engine.accept_delivery_order(order_id, distributor_company_id)
+        await _save_state()
+        return order
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/delivery-orders/{order_id}", response_model=DeliveryOrder)
+async def cancel_delivery_order(
+    order_id: str,
+    shipper_company_id: str,
+    user: Annotated[User, Depends(get_required_user)],
+) -> DeliveryOrder:
+    """Грузоотправитель отменяет ещё не принятую заявку."""
+    _ensure_can_manage_company(shipper_company_id, user, _state)
+    try:
+        order = _engine.cancel_delivery_order(order_id, shipper_company_id)
+        await _save_state()
+        return order
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/prices", response_model=list[PricePoint])
+async def get_price_history(
+    product_id: str | None = None,
+    region_id: str | None = None,
+) -> list[PricePoint]:
+    """Вернуть историю цен с опциональной фильтрацией по товару и региону."""
+    pts = _state.price_history
+    if product_id:
+        pts = [p for p in pts if p.product_id == product_id]
+    if region_id:
+        pts = [p for p in pts if p.region_id == region_id]
+    return pts
+
+
+@router.get("/market-events", response_model=list[MarketEvent])
+async def get_market_events() -> list[MarketEvent]:
+    """Вернуть все рыночные события (включая истёкшие)."""
+    return _state.market_events
+
+
 @router.get("/ratings", response_model=RatingBoard)
 async def get_ratings() -> RatingBoard:
     """Вернуть общий и ролевой рейтинг рынка."""
