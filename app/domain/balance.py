@@ -57,6 +57,7 @@ FACTORY_FORMATS: dict[str, FacilityOption] = {
         fixed_cost_rub_per_day=60_000,
         build_cost_rub=6_000_000,
         storage_type="производство",
+        output_multiplier=0.85,
     ),
     FactoryFormat.PLANT.value: FacilityOption(
         asset_type=AssetType.FACTORY,
@@ -66,6 +67,7 @@ FACTORY_FORMATS: dict[str, FacilityOption] = {
         fixed_cost_rub_per_day=125_000,
         build_cost_rub=16_000_000,
         storage_type="производство",
+        output_multiplier=1.0,
     ),
     FactoryFormat.COMPLEX.value: FacilityOption(
         asset_type=AssetType.FACTORY,
@@ -75,6 +77,7 @@ FACTORY_FORMATS: dict[str, FacilityOption] = {
         fixed_cost_rub_per_day=240_000,
         build_cost_rub=34_000_000,
         storage_type="производство",
+        output_multiplier=1.15,
     ),
 }
 

@@ -777,13 +777,15 @@ class GameEngine:
                 company.id, self._starting_raw_inventory()
             )
             decision = self.state.decisions.get(company.id, CompanyDecision())
+            out_mult = self._factory_output_multiplier(company.id)
             requested = min(
                 decision.production_units,
                 self._daily_capacity(company.id, AssetType.FACTORY, 0),
             )
             max_by_raw = self._max_production_by_raw(recipe, raw_inventory)
-            produced = min(requested, max_by_raw)
-            if requested and produced < requested:
+            base_produced = min(requested, max_by_raw)
+            produced = int(base_produced * out_mult)
+            if requested and base_produced < requested:
                 operations.append(
                     DayClosureOperation(
                         step="raw_material_shortage",
@@ -795,8 +797,8 @@ class GameEngine:
                         ),
                     )
                 )
-            if produced:
-                self._consume_raw_materials(recipe, raw_inventory, produced)
+            if base_produced:
+                self._consume_raw_materials(recipe, raw_inventory, base_produced)
             unit_cost = self._recipe_unit_cost(recipe, raw_by_id)
             if produced:
                 self._add_inventory_batch(
@@ -932,6 +934,19 @@ class GameEngine:
                     message=f"Исполнен контракт {contract.id}.",
                 )
             )
+
+    def _factory_output_multiplier(self, company_id: str) -> float:
+        """Взвешенный по мощности мультипликатор выхода продукции заводов компании."""
+        factories = self._company_assets(company_id, AssetType.FACTORY)
+        total_cap = sum(f.capacity_units_per_day for f in factories)
+        if not factories or not total_cap:
+            return 1.0
+        presets = FACILITY_FORMATS[AssetType.FACTORY]
+        return sum(
+            f.capacity_units_per_day
+            * presets.get(f.facility_format, presets[FactoryFormat.PLANT.value]).output_multiplier
+            for f in factories
+        ) / total_cap
 
     def _store_demand_multiplier(self, company_id: str) -> float:
         """Взвешенный по мощности мультипликатор спроса для форматов магазинов."""

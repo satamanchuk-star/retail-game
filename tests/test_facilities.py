@@ -128,6 +128,43 @@ def test_close_last_factory_rejected() -> None:
         engine.close_facility(company.id, starter.id)
 
 
+def test_complex_produces_more_than_workshop_from_same_raw_materials() -> None:
+    """Комбинат (×1.15) выдаёт больше продукции, чем цех (×0.85) при равном сырье."""
+    from app.domain.models import CompanyDecision
+
+    def _make_producer(engine: GameEngine, name: str) -> object:
+        company = engine.create_company(
+            CompanyCreate(name=name, role=Role.PRODUCER, region_id="volga")
+        )
+        company.cash_rub = 100_000_000
+        return company
+
+    state_w = build_initial_state()
+    eng_w = GameEngine(state_w)
+    co_w = _make_producer(eng_w, "Цех")
+    # replace starter plant with workshop
+    starter_w = next(a for a in eng_w.state.assets if a.company_id == co_w.id)
+    starter_w.facility_format = "workshop"
+    starter_w.capacity_units_per_day = FACTORY_FORMATS["workshop"].capacity_units_per_day
+    eng_w.state.decisions[co_w.id] = CompanyDecision(production_units=1_000)
+    result_w = eng_w.close_day()
+    produced_w = next(r.produced_units for r in result_w.reports if r.company_id == co_w.id)
+
+    state_c = build_initial_state()
+    eng_c = GameEngine(state_c)
+    co_c = _make_producer(eng_c, "Комбинат")
+    starter_c = next(a for a in eng_c.state.assets if a.company_id == co_c.id)
+    starter_c.facility_format = "complex"
+    starter_c.capacity_units_per_day = FACTORY_FORMATS["complex"].capacity_units_per_day
+    eng_c.state.decisions[co_c.id] = CompanyDecision(production_units=1_000)
+    result_c = eng_c.close_day()
+    produced_c = next(r.produced_units for r in result_c.reports if r.company_id == co_c.id)
+
+    assert produced_c > produced_w, (
+        f"Комбинат должен производить больше цеха: {produced_c} <= {produced_w}"
+    )
+
+
 def test_facility_formats_endpoint_lists_tiers() -> None:
     client = TestClient(app)
 
