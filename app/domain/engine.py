@@ -1329,7 +1329,6 @@ class GameEngine:
                 for c in retailers
             }
             weights = {c.id: self._retail_weight(c.id, decisions[c.id]) for c in retailers}
-            total_weight = sum(weights.values()) or 1.0
 
             # Собираем все продукты, которые есть хотя бы у одного ритейлера в регионе
             region_products: set[str] = set()
@@ -1351,6 +1350,13 @@ class GameEngine:
                     product.base_daily_demand * region.demand_index * event_mult
                 )
 
+                # Знаменатель только из тех ритейлеров, у кого есть этот товар
+                product_weight_total = sum(
+                    weights[c.id]
+                    for c in retailers
+                    if self.state.inventories.get(c.id, {}).get(product_id, 0) > 0
+                ) or 1.0
+
                 for company in retailers:
                     decision = decisions[company.id]
                     inventory = self.state.inventories.setdefault(company.id, {})
@@ -1358,8 +1364,8 @@ class GameEngine:
                     if not available:
                         continue
 
-                    # Доля пула пропорциональна конкурентному весу
-                    demand_share = int(total_demand * weights[company.id] / total_weight)
+                    # Доля пула пропорциональна конкурентному весу среди стокированных
+                    demand_share = int(total_demand * weights[company.id] / product_weight_total)
                     remaining_capacity = max(
                         0,
                         self._daily_capacity(company.id, AssetType.STORE, 1_000_000)
@@ -1523,6 +1529,10 @@ class GameEngine:
     ) -> None:
         """Исполнить принятые заявки на доставку, срок которых наступил."""
         closing_day = self.state.day + 1
+        # Трекеры в рамках одного закрытия дня
+        charged_dist_ids: set[str] = set()  # уже списали постоянные расходы склада
+        dist_delivered: dict[str, int] = {}  # уже доставлено единиц за день (кэп склада)
+
         for order in self.state.delivery_orders:
             if order.status != DeliveryStatus.ACCEPTED or order.due_day > closing_day:
                 continue
@@ -1540,28 +1550,47 @@ class GameEngine:
                     )
                 )
                 continue
+
+            # Кэп по дневной мощности склада дистрибьютора
+            dist_id = order.distributor_id
+            warehouse_cap = self._daily_capacity(dist_id, AssetType.WAREHOUSE, 4_000)
+            already_moved = dist_delivered.get(dist_id, 0)
+            remaining_cap = max(0, warehouse_cap - already_moved)
+            capped_qty = min(order.quantity, remaining_cap)
+            if capped_qty == 0:
+                operations.append(
+                    DayClosureOperation(
+                        step="delivery_capacity_exceeded",
+                        company_id=dist_id,
+                        quantity=order.quantity,
+                        message=f"Заявка {order.id} перенесена: склад дистрибьютора исчерпан.",
+                    )
+                )
+                continue
+
             transferred = self._transfer_fifo(
-                order.shipper_id, order.receiver_id, order.product_id, order.quantity
+                order.shipper_id, order.receiver_id, order.product_id, capped_qty
             )
+            dist_delivered[dist_id] = already_moved + transferred
+
             fee = order.fee_rub_per_unit * transferred
             # Грузоотправитель платит за доставку
             reports[order.shipper_id].costs_rub += fee
             reports[order.shipper_id].profit_rub -= fee
-            # Дистрибьютор получает вознаграждение за доставку
-            warehouse_costs = self._fixed_costs(
-                order.distributor_id, AssetType.WAREHOUSE, 45_000
-            )
-            reports[order.distributor_id].revenue_rub += fee
-            reports[order.distributor_id].delivered_units += transferred
-            if order.distributor_id not in {op.company_id for op in operations if op.step == "warehouse_costs"}:
-                reports[order.distributor_id].costs_rub += warehouse_costs
-                reports[order.distributor_id].profit_rub -= warehouse_costs
-            reports[order.distributor_id].profit_rub += fee
+            # Дистрибьютор получает вознаграждение (постоянные расходы — раз в день)
+            warehouse_costs = self._fixed_costs(dist_id, AssetType.WAREHOUSE, 45_000)
+            reports[dist_id].revenue_rub += fee
+            reports[dist_id].delivered_units += transferred
+            if dist_id not in charged_dist_ids:
+                reports[dist_id].costs_rub += warehouse_costs
+                reports[dist_id].profit_rub -= warehouse_costs
+                charged_dist_ids.add(dist_id)
+            reports[dist_id].profit_rub += fee
             order.status = DeliveryStatus.FULFILLED
             operations.append(
                 DayClosureOperation(
                     step="delivery_fulfilled",
-                    company_id=order.distributor_id,
+                    company_id=dist_id,
                     amount_rub=fee,
                     quantity=transferred,
                     message=f"Заявка {order.id}: доставлено {transferred} ед. товара {order.product_id}.",
@@ -1636,10 +1665,16 @@ class GameEngine:
         """Разместить лот на рынке. Товар остаётся у продавца до момента покупки."""
         self._require_company(company_id)
         self._get_product(product_id)
-        available = self.state.inventories.get(company_id, {}).get(product_id, 0)
+        raw_available = self.state.inventories.get(company_id, {}).get(product_id, 0)
+        already_listed = sum(
+            lst.quantity_available
+            for lst in self.state.market_listings
+            if lst.seller_id == company_id and lst.product_id == product_id and lst.is_active
+        )
+        available = raw_available - already_listed
         if available < quantity:
             raise ValueError(
-                f"Недостаточно товара: есть {available} ед., запрошено {quantity}"
+                f"Недостаточно товара: есть {raw_available} ед., из них {already_listed} уже в активных лотах, свободно {available}"
             )
         listing = MarketListing(
             seller_id=company_id,
