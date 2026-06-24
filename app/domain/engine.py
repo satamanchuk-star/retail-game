@@ -81,6 +81,7 @@ class GameEngine:
         self._ensure_company_assets()
         self._ensure_company_inventories()
         self._ensure_inventory_batches()
+        self._backfill_asset_formats()
 
     def _ensure_production_balance(self) -> None:
         """Поддержать старые snapshot-ы без сырья и рецептур."""
@@ -518,10 +519,10 @@ class GameEngine:
             name=f"Склад «{company.name}»",
             region_id=company.region_id,
             capacity_units_per_day=3_000,
-            fixed_cost_rub_per_day=40_000,
+            fixed_cost_rub_per_day=60_000,
             storage_type="смешанное",
             quality_level=1.0,
-            facility_format=WarehouseFormat.DEPOT.value,
+            facility_format=WarehouseFormat.CENTER.value,
         )
 
     def _company_assets(
@@ -558,6 +559,33 @@ class GameEngine:
             if company.id not in self.state.inventories:
                 self.state.inventories[company.id] = self._starting_inventory(
                     company.role
+                )
+
+    def _backfill_asset_formats(self) -> None:
+        """Вывести форматы объектов, созданных до введения форматной системы."""
+        store_tiers = list(STORE_FORMATS.items())
+        for asset in self.state.assets:
+            if asset.asset_type == AssetType.STORE and asset.store_format is None:
+                asset.store_format = next(
+                    (
+                        fmt
+                        for fmt, opt in reversed(store_tiers)
+                        if asset.capacity_units_per_day >= opt.capacity_units_per_day
+                    ),
+                    StoreFormat.KIOSK,
+                )
+            elif (
+                asset.asset_type in (AssetType.FACTORY, AssetType.WAREHOUSE)
+                and asset.facility_format is None
+            ):
+                presets = FACILITY_FORMATS.get(asset.asset_type, {})
+                asset.facility_format = next(
+                    (
+                        tier
+                        for tier, opt in reversed(list(presets.items()))
+                        if asset.capacity_units_per_day >= opt.capacity_units_per_day
+                    ),
+                    next(iter(presets), None),
                 )
 
     def _ensure_inventory_batches(self) -> None:
