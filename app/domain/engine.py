@@ -1,5 +1,6 @@
 """Игровой движок закрывает день единообразно для трёх ролей рынка."""
 
+import random
 from copy import deepcopy
 from uuid import uuid4
 
@@ -28,6 +29,9 @@ from app.domain.models import (
     ContractStatus,
     DayClosureOperation,
     DayClosureRecord,
+    DeliveryOrder,
+    DeliveryOrderCreate,
+    DeliveryStatus,
     FactoryFormat,
     FinancialReport,
     GameState,
@@ -35,6 +39,10 @@ from app.domain.models import (
     LedgerEntry,
     Loan,
     LoanCreate,
+    MarketEvent,
+    MarketEventType,
+    MarketListing,
+    PricePoint,
     ProductionRecipe,
     RawMaterial,
     Region,
@@ -443,12 +451,16 @@ class GameEngine:
         news: list[str] = []
 
         self._apply_npc_decisions()
+        self._reconcile_npc_listings()
         self._expire_inventory_batches(reports_by_company, operations)
         self._apply_production(reports_by_company, operations)
+        self._apply_market_npc_listing(operations)
         self._apply_due_contracts(reports_by_company, news, operations)
+        self._apply_market_npc_purchases(operations)
         self._apply_retail_sales(reports_by_company, operations)
-        self._apply_logistics_income(reports_by_company, operations)
+        self._apply_due_delivery_orders(reports_by_company, operations)
         self._apply_loan_interest(reports_by_company, operations)
+        self._generate_market_events(operations)
         self._apply_financial_accounting(reports_by_company, operations)
 
         for company in self.state.companies:
@@ -844,13 +856,24 @@ class GameEngine:
                         raw_by_id, reports, operations, out_mult,
                     )
             else:
-                recipe = self._get_default_recipe()
                 decision = self.state.decisions.get(company.id, CompanyDecision())
+                recipe = self._resolve_recipe(decision.recipe_id)
                 requested = min(decision.production_units, capacity)
                 self._run_recipe(
                     company, recipe, requested, raw_inventory,
                     raw_by_id, reports, operations, out_mult,
                 )
+
+    def _resolve_recipe(self, recipe_id: str | None) -> ProductionRecipe:
+        """Вернуть рецепт по ID или дефолтный (хлеб)."""
+        if recipe_id:
+            found = next(
+                (r for r in self.state.production_recipes if r.product_id == recipe_id),
+                None,
+            )
+            if found is not None:
+                return found
+        return self._get_default_recipe()
 
     def _get_default_recipe(self) -> ProductionRecipe:
         """Выбрать минимальную стартовую рецептуру для текущего прототипа."""
@@ -993,6 +1016,133 @@ class GameEngine:
                 company.cash_rub -= cost
                 raw_inventory[raw_id] = current + buy_amount
 
+    # -------------------------------------------------------------------------
+    # NPC market participation
+    # -------------------------------------------------------------------------
+
+    def _reconcile_npc_listings(self) -> None:
+        """Скорректировать объём NPC-лота под реальный инвентарь продавца."""
+        for listing in self.state.market_listings:
+            if not listing.is_active:
+                continue
+            seller = next(
+                (c for c in self.state.companies if c.id == listing.seller_id and c.is_npc),
+                None,
+            )
+            if seller is None:
+                continue
+            actual = self.state.inventories.get(seller.id, {}).get(listing.product_id, 0)
+            if actual <= 0:
+                listing.is_active = False
+                listing.quantity_available = 0
+            elif actual < listing.quantity_available:
+                listing.quantity_available = actual
+
+    def _apply_market_npc_listing(
+        self,
+        operations: list[DayClosureOperation],
+    ) -> None:
+        """NPC-производители выставляют излишки производства на рынок."""
+        product_by_id = {p.id: p for p in self.state.products}
+        for company in self.state.companies:
+            if not company.is_npc or company.role != Role.PRODUCER:
+                continue
+            inventory = self.state.inventories.get(company.id, {})
+            for product_id, available in inventory.items():
+                if available < 100:
+                    continue
+                product = product_by_id.get(product_id)
+                if product is None:
+                    continue
+                already_listed = any(
+                    lst.seller_id == company.id
+                    and lst.product_id == product_id
+                    and lst.is_active
+                    for lst in self.state.market_listings
+                )
+                if already_listed:
+                    continue
+                to_list = min(int(available * 0.6), product.base_daily_demand * 7)
+                to_list = max(50, to_list)
+                if to_list > available:
+                    continue
+                list_price = max(1, int(product.base_price_rub * 1.10))
+                try:
+                    self.create_listing(company.id, product_id, to_list, list_price)
+                    operations.append(
+                        DayClosureOperation(
+                            step="npc_market_listing",
+                            company_id=company.id,
+                            quantity=to_list,
+                            amount_rub=list_price * to_list,
+                            message=(
+                                f"NPC «{company.name}» выставил {to_list} ед."
+                                f" {product.name} по {list_price} руб."
+                            ),
+                        )
+                    )
+                except ValueError:
+                    continue
+
+    def _apply_market_npc_purchases(
+        self,
+        operations: list[DayClosureOperation],
+    ) -> None:
+        """NPC-ритейлеры пополняют запасы с рынка, если цена приемлема."""
+        product_by_id = {p.id: p for p in self.state.products}
+        for company in self.state.companies:
+            if not company.is_npc or company.role != Role.RETAILER:
+                continue
+            inventory = self.state.inventories.get(company.id, {})
+            cash_budget = int(company.cash_rub * 0.30)
+
+            for product_id, current in list(inventory.items()):
+                product = product_by_id.get(product_id)
+                if product is None:
+                    continue
+                threshold = product.base_daily_demand * 5
+                if current >= threshold:
+                    continue
+                needed = threshold - current
+
+                listings = sorted(
+                    [
+                        lst for lst in self.state.market_listings
+                        if lst.product_id == product_id
+                        and lst.is_active
+                        and lst.seller_id != company.id
+                        and lst.quantity_available > 0
+                    ],
+                    key=lambda lst: lst.price_rub_per_unit,
+                )
+                for listing in listings:
+                    if listing.price_rub_per_unit > int(product.base_price_rub * 1.4):
+                        break
+                    if cash_budget <= 0 or needed <= 0:
+                        break
+                    can_afford = cash_budget // listing.price_rub_per_unit
+                    to_buy = min(needed, listing.quantity_available, max(0, can_afford))
+                    if to_buy <= 0:
+                        continue
+                    try:
+                        cost, _ = self.purchase_listing(listing.id, company.id, to_buy)
+                        cash_budget -= cost
+                        needed -= to_buy
+                        operations.append(
+                            DayClosureOperation(
+                                step="npc_market_purchase",
+                                company_id=company.id,
+                                quantity=to_buy,
+                                amount_rub=cost,
+                                message=(
+                                    f"NPC «{company.name}» купил {to_buy} ед."
+                                    f" {product.name} по {listing.price_rub_per_unit} руб."
+                                ),
+                            )
+                        )
+                    except ValueError:
+                        continue
+
     def _apply_npc_decisions(self) -> None:
         """Сформировать решения на день для всех NPC-компаний."""
         for company in self.state.companies:
@@ -1001,11 +1151,13 @@ class GameEngine:
             if company.role == Role.PRODUCER:
                 self._npc_restock_raw_materials(company)
             elif company.role == Role.DISTRIBUTOR:
-                cap = self._daily_capacity(company.id, AssetType.WAREHOUSE, 0)
-                self.state.decisions[company.id] = CompanyDecision(
-                    logistics_capacity_units=int(cap * 0.9),
-                    target_price_index=1.0,
-                )
+                # NPC-дистрибьютор принимает все pending-заявки, в которых он назван
+                for order in self.state.delivery_orders:
+                    if (
+                        order.distributor_id == company.id
+                        and order.status == DeliveryStatus.PENDING
+                    ):
+                        order.status = DeliveryStatus.ACCEPTED
             elif company.role == Role.RETAILER:
                 inventory = self.state.inventories.get(company.id, {})
                 total_stock = sum(inventory.values())
@@ -1098,59 +1250,172 @@ class GameEngine:
             for s in stores
         ) / total_cap
 
+    def _demand_event_multiplier(self, region_id: str, product_id: str) -> float:
+        """Суммарный мультипликатор спроса от активных рыночных событий."""
+        closing_day = self.state.day + 1
+        mult = 1.0
+        for event in self.state.market_events:
+            if event.expires_day < closing_day:
+                continue
+            if event.region_id is not None and event.region_id != region_id:
+                continue
+            if event.product_id is not None and event.product_id != product_id:
+                continue
+            mult *= event.magnitude
+        return mult
+
+    _EVENT_TEMPLATES: list[tuple[str, float, str]] = [
+        ("demand_shock", 0.80, "Снижение потребительского спроса на {p} в регионе {r} на 20%."),
+        ("demand_shock", 1.25, "Рост потребительского спроса на {p} в регионе {r} на 25%."),
+        ("demand_shock", 1.15, "Сезонный всплеск продаж {p} в регионе {r} на 15%."),
+        ("supply_disruption", 0.75, "Перебои с поставками {p} в регионе {r}: дефицит на рынке."),
+    ]
+
+    def _generate_market_events(self, operations: list[DayClosureOperation]) -> None:
+        """С вероятностью 15% генерировать рыночное событие на закрытие дня."""
+        if random.random() > 0.15:
+            return
+        closing_day = self.state.day + 1
+        product = random.choice(self.state.products)
+        region = random.choice(self.state.regions)
+        etype_str, magnitude, tmpl = random.choice(self._EVENT_TEMPLATES)
+        description = tmpl.format(p=product.name, r=region.name)
+        duration = random.randint(2, 5)
+        event = MarketEvent(
+            day=closing_day,
+            event_type=MarketEventType(etype_str),
+            region_id=region.id,
+            product_id=product.id,
+            magnitude=magnitude,
+            description=description,
+            expires_day=closing_day + duration,
+        )
+        self.state.market_events.append(event)
+        self.state.news.insert(0, description)
+        operations.append(
+            DayClosureOperation(
+                step="market_event",
+                company_id="",
+                message=description,
+            )
+        )
+
+    def _retail_weight(self, company_id: str, decision: CompanyDecision) -> float:
+        """Конкурентный вес ритейлера при дележе пула спроса."""
+        return (
+            self._store_demand_multiplier(company_id)
+            * (1.08 if decision.marketing_budget_rub else 1.0)
+            / decision.target_price_index
+        )
+
     def _apply_retail_sales(
         self,
         reports: dict[str, CompanyDayReport],
         operations: list[DayClosureOperation],
     ) -> None:
         product_by_id = {product.id: product for product in self.state.products}
+
+        # Группируем ритейлеров по регионам
+        by_region: dict[str, list[Company]] = {}
         for company in self.state.companies:
-            if company.role != Role.RETAILER:
-                continue
-            region = self._require_region(company.region_id)
-            decision = self.state.decisions.get(company.id, CompanyDecision())
-            inventory = self.state.inventories.setdefault(company.id, {})
-            fmt_mult = self._store_demand_multiplier(company.id)
-            for product_id, available in list(inventory.items()):
-                product = product_by_id[product_id]
-                demand = int(
-                    product.base_daily_demand
-                    * region.demand_index
-                    * (1.08 if decision.marketing_budget_rub else 1.0)
-                    * fmt_mult
-                    / decision.target_price_index
+            if company.role == Role.RETAILER:
+                by_region.setdefault(company.region_id, []).append(company)
+
+        closing_day = self.state.day + 1
+        for region_id, retailers in by_region.items():
+            region = self._require_region(region_id)
+            decisions = {
+                c.id: self.state.decisions.get(c.id, CompanyDecision())
+                for c in retailers
+            }
+            weights = {c.id: self._retail_weight(c.id, decisions[c.id]) for c in retailers}
+
+            # Собираем все продукты, которые есть хотя бы у одного ритейлера в регионе
+            region_products: set[str] = set()
+            for company in retailers:
+                region_products.update(
+                    self.state.inventories.setdefault(company.id, {}).keys()
                 )
-                remaining_capacity = max(
-                    0,
-                    self._daily_capacity(company.id, AssetType.STORE, 1_000_000)
-                    - reports[company.id].sold_units,
+
+            # Данные для истории цен: product_id → (суммарная выручка, суммарные единицы)
+            price_data: dict[str, list[int]] = {}
+
+            for product_id in region_products:
+                product = product_by_id.get(product_id)
+                if not product:
+                    continue
+                # Единый пул спроса с учётом рыночных событий
+                event_mult = self._demand_event_multiplier(region_id, product_id)
+                total_demand = int(
+                    product.base_daily_demand * region.demand_index * event_mult
                 )
-                sold = min(available, max(demand, 0), remaining_capacity)
-                if sold:
-                    sold = self._consume_fifo(company.id, product_id, sold)
-                price = int(product.base_price_rub * decision.target_price_index)
-                revenue = sold * price
-                reports[company.id].sold_units += sold
-                reports[company.id].revenue_rub += revenue
-                reports[company.id].profit_rub += revenue
-                if sold:
-                    operations.append(
-                        DayClosureOperation(
-                            step="retail_sale",
-                            company_id=company.id,
-                            amount_rub=revenue,
-                            quantity=sold,
-                            message=f"Продано {sold} ед. товара {product.name}.",
+
+                # Знаменатель только из тех ритейлеров, у кого есть этот товар
+                product_weight_total = sum(
+                    weights[c.id]
+                    for c in retailers
+                    if self.state.inventories.get(c.id, {}).get(product_id, 0) > 0
+                ) or 1.0
+
+                for company in retailers:
+                    decision = decisions[company.id]
+                    inventory = self.state.inventories.setdefault(company.id, {})
+                    available = inventory.get(product_id, 0)
+                    if not available:
+                        continue
+
+                    # Доля пула пропорциональна конкурентному весу среди стокированных
+                    demand_share = int(total_demand * weights[company.id] / product_weight_total)
+                    remaining_capacity = max(
+                        0,
+                        self._daily_capacity(company.id, AssetType.STORE, 1_000_000)
+                        - reports[company.id].sold_units,
+                    )
+                    sold = min(available, max(demand_share, 0), remaining_capacity)
+                    if sold:
+                        sold = self._consume_fifo(company.id, product_id, sold)
+                    price = int(product.base_price_rub * decision.target_price_index)
+                    revenue = sold * price
+                    reports[company.id].sold_units += sold
+                    reports[company.id].revenue_rub += revenue
+                    reports[company.id].profit_rub += revenue
+                    if sold:
+                        operations.append(
+                            DayClosureOperation(
+                                step="retail_sale",
+                                company_id=company.id,
+                                amount_rub=revenue,
+                                quantity=sold,
+                                message=f"Продано {sold} ед. товара {product.name}.",
+                            )
+                        )
+                        acc = price_data.setdefault(product_id, [0, 0])
+                        acc[0] += revenue
+                        acc[1] += sold
+
+            # Записать историю цен региона за этот день
+            for product_id, (rev, units) in price_data.items():
+                if units > 0:
+                    self.state.price_history.append(
+                        PricePoint(
+                            day=closing_day,
+                            region_id=region_id,
+                            product_id=product_id,
+                            avg_price_rub=rev // units,
+                            total_units_sold=units,
                         )
                     )
 
-            operating_costs = (
-                self._fixed_costs(company.id, AssetType.STORE, 85_000)
-                + decision.marketing_budget_rub
-            )
-            tax_reserve = int(max(reports[company.id].profit_rub, 0) * 0.2)
-            reports[company.id].costs_rub += operating_costs + tax_reserve
-            reports[company.id].profit_rub -= operating_costs + tax_reserve
+            # Операционные расходы каждого ритейлера в регионе
+            for company in retailers:
+                decision = decisions[company.id]
+                operating_costs = (
+                    self._fixed_costs(company.id, AssetType.STORE, 85_000)
+                    + decision.marketing_budget_rub
+                )
+                tax_reserve = int(max(reports[company.id].profit_rub, 0) * 0.2)
+                reports[company.id].costs_rub += operating_costs + tax_reserve
+                reports[company.id].profit_rub -= operating_costs + tax_reserve
 
     def _apply_loan_interest(
         self,
@@ -1257,38 +1522,222 @@ class GameEngine:
             )
         )
 
-    def _apply_logistics_income(
+    def _apply_due_delivery_orders(
         self,
         reports: dict[str, CompanyDayReport],
         operations: list[DayClosureOperation],
     ) -> None:
-        for company in self.state.companies:
-            if company.role != Role.DISTRIBUTOR:
+        """Исполнить принятые заявки на доставку, срок которых наступил."""
+        closing_day = self.state.day + 1
+        # Трекеры в рамках одного закрытия дня
+        charged_dist_ids: set[str] = set()  # уже списали постоянные расходы склада
+        dist_delivered: dict[str, int] = {}  # уже доставлено единиц за день (кэп склада)
+
+        for order in self.state.delivery_orders:
+            if order.status != DeliveryStatus.ACCEPTED or order.due_day > closing_day:
                 continue
-            decision = self.state.decisions.get(company.id, CompanyDecision())
-            rate_mult = self._warehouse_rate_multiplier(company.id)
-            delivered = min(
-                decision.logistics_capacity_units,
-                self._daily_capacity(company.id, AssetType.WAREHOUSE, 4_000),
+            available = self.state.inventories.get(order.shipper_id, {}).get(
+                order.product_id, 0
             )
-            revenue = int(delivered * 18 * rate_mult)
-            costs = delivered * 9 + self._fixed_costs(
-                company.id, AssetType.WAREHOUSE, 45_000
-            )
-            reports[company.id].delivered_units += delivered
-            reports[company.id].revenue_rub += revenue
-            reports[company.id].costs_rub += costs
-            reports[company.id].profit_rub += revenue - costs
-            if delivered:
+            if available < order.quantity:
+                order.status = DeliveryStatus.CANCELLED
                 operations.append(
                     DayClosureOperation(
-                        step="logistics_delivery",
-                        company_id=company.id,
-                        amount_rub=revenue,
-                        quantity=delivered,
-                        message=f"Доставлено {delivered} ед. грузовой мощности.",
+                        step="delivery_cancelled",
+                        company_id=order.shipper_id,
+                        quantity=order.quantity,
+                        message=f"Заявка {order.id} отменена: у грузоотправителя нет товара.",
                     )
                 )
+                continue
+
+            # Кэп по дневной мощности склада дистрибьютора
+            dist_id = order.distributor_id
+            warehouse_cap = self._daily_capacity(dist_id, AssetType.WAREHOUSE, 4_000)
+            already_moved = dist_delivered.get(dist_id, 0)
+            remaining_cap = max(0, warehouse_cap - already_moved)
+            capped_qty = min(order.quantity, remaining_cap)
+            if capped_qty == 0:
+                operations.append(
+                    DayClosureOperation(
+                        step="delivery_capacity_exceeded",
+                        company_id=dist_id,
+                        quantity=order.quantity,
+                        message=f"Заявка {order.id} перенесена: склад дистрибьютора исчерпан.",
+                    )
+                )
+                continue
+
+            transferred = self._transfer_fifo(
+                order.shipper_id, order.receiver_id, order.product_id, capped_qty
+            )
+            dist_delivered[dist_id] = already_moved + transferred
+
+            fee = order.fee_rub_per_unit * transferred
+            # Грузоотправитель платит за доставку
+            reports[order.shipper_id].costs_rub += fee
+            reports[order.shipper_id].profit_rub -= fee
+            # Дистрибьютор получает вознаграждение (постоянные расходы — раз в день)
+            warehouse_costs = self._fixed_costs(dist_id, AssetType.WAREHOUSE, 45_000)
+            reports[dist_id].revenue_rub += fee
+            reports[dist_id].delivered_units += transferred
+            if dist_id not in charged_dist_ids:
+                reports[dist_id].costs_rub += warehouse_costs
+                reports[dist_id].profit_rub -= warehouse_costs
+                charged_dist_ids.add(dist_id)
+            reports[dist_id].profit_rub += fee
+            order.status = DeliveryStatus.FULFILLED
+            operations.append(
+                DayClosureOperation(
+                    step="delivery_fulfilled",
+                    company_id=dist_id,
+                    amount_rub=fee,
+                    quantity=transferred,
+                    message=f"Заявка {order.id}: доставлено {transferred} ед. товара {order.product_id}.",
+                )
+            )
+
+    # -------------------------------------------------------------------------
+    # Delivery orders (public API)
+    # -------------------------------------------------------------------------
+
+    def create_delivery_order(
+        self, shipper_id: str, payload: DeliveryOrderCreate
+    ) -> DeliveryOrder:
+        """Создать заявку на доставку. Статус PENDING — ждёт принятия дистрибьютором."""
+        self._require_company(shipper_id)
+        self._require_company(payload.distributor_id)
+        self._require_company(payload.receiver_id)
+        self._get_product(payload.product_id)
+        if shipper_id == payload.distributor_id or shipper_id == payload.receiver_id:
+            raise ValueError("Грузоотправитель, дистрибьютор и получатель должны быть разными.")
+        dist = self._require_company(payload.distributor_id)
+        if dist.role != Role.DISTRIBUTOR:
+            raise ValueError("Указанная компания не является дистрибьютором.")
+        order = DeliveryOrder(
+            shipper_id=shipper_id,
+            distributor_id=payload.distributor_id,
+            receiver_id=payload.receiver_id,
+            product_id=payload.product_id,
+            quantity=payload.quantity,
+            fee_rub_per_unit=payload.fee_rub_per_unit,
+            due_day=payload.due_day,
+            created_day=self.state.day,
+        )
+        self.state.delivery_orders.append(order)
+        return order
+
+    def accept_delivery_order(self, order_id: str, distributor_id: str) -> DeliveryOrder:
+        """Дистрибьютор принимает заявку. Только именованный дистрибьютор может принять."""
+        order = self._require_delivery_order(order_id)
+        if order.distributor_id != distributor_id:
+            raise ValueError("Принять заявку может только назначенный дистрибьютор.")
+        if order.status != DeliveryStatus.PENDING:
+            raise ValueError(f"Заявка {order_id} уже имеет статус {order.status}.")
+        order.status = DeliveryStatus.ACCEPTED
+        return order
+
+    def cancel_delivery_order(self, order_id: str, requester_id: str) -> DeliveryOrder:
+        """Отменить заявку: только грузоотправитель, пока она PENDING или ACCEPTED."""
+        order = self._require_delivery_order(order_id)
+        if order.shipper_id != requester_id:
+            raise ValueError("Отменить заявку может только грузоотправитель.")
+        if order.status == DeliveryStatus.FULFILLED:
+            raise ValueError("Нельзя отменить уже исполненную заявку.")
+        order.status = DeliveryStatus.CANCELLED
+        return order
+
+    def _require_delivery_order(self, order_id: str) -> DeliveryOrder:
+        order = next(
+            (o for o in self.state.delivery_orders if o.id == order_id), None
+        )
+        if not order:
+            raise ValueError(f"Заявка {order_id} не найдена.")
+        return order
+
+    # -------------------------------------------------------------------------
+    # Market listings
+    # -------------------------------------------------------------------------
+
+    def create_listing(
+        self, company_id: str, product_id: str, quantity: int, price_rub_per_unit: int
+    ) -> MarketListing:
+        """Разместить лот на рынке. Товар остаётся у продавца до момента покупки."""
+        self._require_company(company_id)
+        self._get_product(product_id)
+        raw_available = self.state.inventories.get(company_id, {}).get(product_id, 0)
+        already_listed = sum(
+            lst.quantity_available
+            for lst in self.state.market_listings
+            if lst.seller_id == company_id and lst.product_id == product_id and lst.is_active
+        )
+        available = raw_available - already_listed
+        if available < quantity:
+            raise ValueError(
+                f"Недостаточно товара: есть {raw_available} ед., из них {already_listed} уже в активных лотах, свободно {available}"
+            )
+        listing = MarketListing(
+            seller_id=company_id,
+            product_id=product_id,
+            quantity_available=quantity,
+            price_rub_per_unit=price_rub_per_unit,
+            day_posted=self.state.day,
+        )
+        self.state.market_listings.append(listing)
+        return listing
+
+    def cancel_listing(self, listing_id: str, company_id: str) -> MarketListing:
+        """Отозвать лот с рынка (только продавец)."""
+        listing = self._require_listing(listing_id)
+        if listing.seller_id != company_id:
+            raise PermissionError("Отменить лот может только его продавец")
+        if not listing.is_active:
+            raise ValueError("Лот уже неактивен")
+        listing.is_active = False
+        return listing
+
+    def purchase_listing(
+        self, listing_id: str, buyer_id: str, quantity: int
+    ) -> tuple[int, MarketListing]:
+        """Купить товар из лота: мгновенный перевод денег и товара."""
+        listing = self._require_listing(listing_id)
+        if not listing.is_active:
+            raise ValueError("Лот не активен")
+        if listing.seller_id == buyer_id:
+            raise ValueError("Нельзя покупать у себя")
+        if quantity > listing.quantity_available:
+            raise ValueError(
+                f"Запрошено {quantity}, доступно {listing.quantity_available}"
+            )
+        seller_stock = (
+            self.state.inventories.get(listing.seller_id, {}).get(listing.product_id, 0)
+        )
+        if seller_stock < quantity:
+            raise ValueError(
+                f"Продавец имеет только {seller_stock} ед. на складе"
+            )
+        total_cost = quantity * listing.price_rub_per_unit
+        buyer = self._require_company(buyer_id)
+        if buyer.cash_rub < total_cost:
+            raise ValueError(
+                f"Недостаточно средств: нужно {total_cost} руб., есть {buyer.cash_rub} руб."
+            )
+        seller = self._require_company(listing.seller_id)
+        buyer.cash_rub -= total_cost
+        seller.cash_rub += total_cost
+        self._transfer_fifo(listing.seller_id, buyer_id, listing.product_id, quantity)
+        listing.quantity_available -= quantity
+        if listing.quantity_available == 0:
+            listing.is_active = False
+        return total_cost, listing
+
+    def _require_listing(self, listing_id: str) -> MarketListing:
+        listing = next(
+            (lst for lst in self.state.market_listings if lst.id == listing_id), None
+        )
+        if listing is None:
+            raise ValueError("Лот не найден")
+        return listing
 
     def _require_company(self, company_id: str) -> Company:
         company = next(

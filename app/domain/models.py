@@ -1,6 +1,8 @@
 """Доменные модели фиксируют минимальное ядро рынка без преждевременной БД."""
 
+from datetime import datetime
 from enum import StrEnum
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -246,6 +248,7 @@ class CompanyDecision(BaseModel):
 
     target_price_index: float = Field(default=1.0, ge=0.65, le=1.6)
     production_units: int = Field(default=1_000, ge=0, le=50_000)
+    recipe_id: str | None = None
     logistics_capacity_units: int = Field(default=1_000, ge=0, le=50_000)
     marketing_budget_rub: int = Field(default=0, ge=0, le=5_000_000)
     ready: bool = False
@@ -503,6 +506,98 @@ class ProjectStatus(BaseModel):
     milestones: list[ProjectMilestone]
 
 
+class PricePoint(BaseModel):
+    """Средневзвешенная цена продажи в регионе за один игровой день."""
+
+    day: int
+    region_id: str
+    product_id: str
+    avg_price_rub: int
+    total_units_sold: int = 0
+
+
+class MarketEventType(StrEnum):
+    """Тип рыночного события."""
+
+    DEMAND_SHOCK = "demand_shock"
+    SUPPLY_DISRUPTION = "supply_disruption"
+
+
+class MarketEvent(BaseModel):
+    """Случайное рыночное событие, влияющее на спрос в регионе."""
+
+    id: str = Field(default_factory=lambda: f"evt_{uuid4().hex[:8]}")
+    day: int
+    event_type: MarketEventType
+    region_id: str | None = None   # None — все регионы
+    product_id: str | None = None  # None — все товары
+    magnitude: float               # мультипликатор спроса: 1.25 = +25%, 0.80 = -20%
+    description: str
+    expires_day: int               # эффект действует до этого дня включительно
+
+
+class DeliveryStatus(StrEnum):
+    """Жизненный цикл заявки на доставку."""
+
+    PENDING = "pending"       # создана, ждёт принятия дистрибьютором
+    ACCEPTED = "accepted"     # дистрибьютор принял
+    FULFILLED = "fulfilled"   # товар доставлен
+    CANCELLED = "cancelled"   # отменена до исполнения
+
+
+class DeliveryOrder(BaseModel):
+    """Заявка грузоотправителя: перевезти товар через конкретного дистрибьютора."""
+
+    id: str = Field(default_factory=lambda: f"deliv_{uuid4().hex[:8]}")
+    status: DeliveryStatus = DeliveryStatus.PENDING
+    shipper_id: str       # кто отдаёт товар
+    distributor_id: str   # кто везёт (получает fee)
+    receiver_id: str      # кто получает товар
+    product_id: str
+    quantity: int = Field(ge=1)
+    fee_rub_per_unit: int = Field(ge=0)
+    due_day: int = Field(ge=1)
+    created_day: int = 0
+
+
+class DeliveryOrderCreate(BaseModel):
+    """Запрос на создание заявки (вызывает грузоотправитель)."""
+
+    distributor_id: str
+    receiver_id: str
+    product_id: str
+    quantity: int = Field(ge=1, le=500_000)
+    fee_rub_per_unit: int = Field(ge=0, le=10_000_000)
+    due_day: int = Field(ge=1)
+
+
+class MarketListing(BaseModel):
+    """Публичный лот на рынке: продавец предлагает товар по фиксированной цене."""
+
+    id: str = Field(default_factory=lambda: uuid4().hex[:8])
+    seller_id: str
+    product_id: str
+    quantity_available: int = Field(ge=0)
+    price_rub_per_unit: int = Field(ge=1)
+    day_posted: int = 0
+    is_active: bool = True
+
+
+class MarketListingCreate(BaseModel):
+    """Запрос продавца на создание лота."""
+
+    product_id: str
+    quantity: int = Field(ge=1, le=500_000)
+    price_rub_per_unit: int = Field(ge=1, le=10_000_000)
+
+
+class MarketPurchaseCreate(BaseModel):
+    """Запрос покупателя на приобретение товара из лота."""
+
+    buyer_company_id: str
+    quantity: int = Field(ge=1, le=500_000)
+
+
 class PublicGameState(BaseModel):
     """Публичный снимок мира без секретов пользователей и сессий."""
 
@@ -524,6 +619,10 @@ class PublicGameState(BaseModel):
     loans: list[Loan] = Field(default_factory=list)
     day_closures: list[DayClosureRecord] = Field(default_factory=list)
     ledger_entries: list[LedgerEntry] = Field(default_factory=list)
+    market_listings: list[MarketListing] = Field(default_factory=list)
+    delivery_orders: list[DeliveryOrder] = Field(default_factory=list)
+    price_history: list[PricePoint] = Field(default_factory=list)
+    market_events: list[MarketEvent] = Field(default_factory=list)
 
 
 class GameState(BaseModel):
@@ -547,9 +646,29 @@ class GameState(BaseModel):
     loans: list[Loan] = Field(default_factory=list)
     day_closures: list[DayClosureRecord] = Field(default_factory=list)
     ledger_entries: list[LedgerEntry] = Field(default_factory=list)
+    market_listings: list[MarketListing] = Field(default_factory=list)
+    delivery_orders: list[DeliveryOrder] = Field(default_factory=list)
+    price_history: list[PricePoint] = Field(default_factory=list)
+    market_events: list[MarketEvent] = Field(default_factory=list)
     users: list[User] = Field(default_factory=list)
     sessions: dict[str, str] = Field(default_factory=dict)
 
     def to_public(self) -> PublicGameState:
         """Вернуть состояние без password hash и bearer-сессий."""
         return PublicGameState(**self.model_dump(exclude={"users", "sessions"}))
+
+
+class SessionCreate(BaseModel):
+    """Запрос на создание новой игровой сессии."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+
+class SessionInfo(BaseModel):
+    """Публичная сводка об игровой сессии."""
+
+    id: str
+    name: str
+    day: int
+    companies: int
+    created_at: datetime

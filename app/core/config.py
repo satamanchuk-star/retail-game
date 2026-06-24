@@ -1,5 +1,7 @@
 """Конфигурация вынесена из кода, чтобы баланс и окружение менялись безопасно."""
 
+from secrets import token_hex
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,6 +20,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("PROFIT_CHAIN_DATABASE_URL", "DATABASE_URL"),
     )
+
+    # JWT-авторизация
+    jwt_secret_key: str = Field(default_factory=lambda: token_hex(32))
+    jwt_algorithm: str = "HS256"
+    jwt_expire_hours: int = Field(default=72, ge=1, le=8760)
 
     model_config = SettingsConfigDict(env_prefix="PROFIT_CHAIN_", env_file=".env")
 

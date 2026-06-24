@@ -1,7 +1,7 @@
 """Тесты DB-снапшота защищают переход от файла к durable-хранилищу."""
 
 import pytest
-from app.domain.engine import GameEngine
+from app.domain.engine import GameEngine, build_initial_state
 from app.domain.models import CompanyCreate, Role
 from app.services.database_store import DatabaseSnapshotStore
 
@@ -42,4 +42,4 @@ async def test_database_snapshot_store_reset_recreates_initial_world(tmp_path) -
 
     assert reset_state.day == 0
     assert restored.day == 0
-    assert len(restored.companies) == 3
+    assert len(restored.companies) == len(build_initial_state().companies)

@@ -165,40 +165,42 @@ def test_complex_produces_more_than_workshop_from_same_raw_materials() -> None:
     )
 
 
-def test_hub_earns_more_than_depot_for_same_logistics_volume() -> None:
-    """Логистический хаб (×1.20) зарабатывает больше склада (×0.85) при равной загрузке."""
-    from app.domain.models import CompanyDecision
+def test_distributor_earns_only_from_delivery_orders() -> None:
+    """Дистрибьютор без заявок не получает дохода; с принятой заявкой — получает."""
+    from app.domain.models import DeliveryOrderCreate
 
-    def _make_distributor(engine: GameEngine, name: str) -> object:
-        return engine.create_company(
-            CompanyCreate(name=name, role=Role.DISTRIBUTOR, region_id="north")
-        )
+    FEE = 20
+    QTY = 500
 
-    def _set_warehouse_format(engine: GameEngine, company_id: str, tier: str) -> None:
-        wh = next(a for a in engine.state.assets if a.company_id == company_id)
-        wh.facility_format = tier
-        wh.capacity_units_per_day = (
-            WAREHOUSE_FORMATS[tier].capacity_units_per_day
-        )
+    # Движок A: дистрибьютор, которому не создали заявок
+    eng_a = GameEngine(build_initial_state())
+    npc_dist_a = next(c for c in eng_a.state.companies if c.is_npc and c.role == "distributor")
+    result_a = eng_a.close_day()
+    rev_no_order = next(r.revenue_rub for r in result_a.reports if r.company_id == npc_dist_a.id)
 
-    state_d = build_initial_state()
-    eng_d = GameEngine(state_d)
-    co_d = _make_distributor(eng_d, "Склад")
-    _set_warehouse_format(eng_d, co_d.id, "depot")
-    eng_d.state.decisions[co_d.id] = CompanyDecision(logistics_capacity_units=1_000)
-    result_d = eng_d.close_day()
-    rev_depot = next(r.revenue_rub for r in result_d.reports if r.company_id == co_d.id)
+    # Движок B: дистрибьютор с принятой заявкой
+    eng_b = GameEngine(build_initial_state())
+    npc_prod_b = next(c for c in eng_b.state.companies if c.is_npc and c.role == "producer")
+    npc_dist_b = next(c for c in eng_b.state.companies if c.is_npc and c.role == "distributor")
+    player_b = next(c for c in eng_b.state.companies if not c.is_npc)
+    eng_b.create_delivery_order(
+        npc_prod_b.id,
+        DeliveryOrderCreate(
+            distributor_id=npc_dist_b.id,
+            receiver_id=player_b.id,
+            product_id="bread",
+            quantity=QTY,
+            fee_rub_per_unit=FEE,
+            due_day=1,
+        ),
+    )
+    # NPC-дистрибьютор принимает заявку в _apply_npc_decisions
+    result_b = eng_b.close_day()
+    rev_with_order = next(r.revenue_rub for r in result_b.reports if r.company_id == npc_dist_b.id)
 
-    state_h = build_initial_state()
-    eng_h = GameEngine(state_h)
-    co_h = _make_distributor(eng_h, "Хаб")
-    _set_warehouse_format(eng_h, co_h.id, "hub")
-    eng_h.state.decisions[co_h.id] = CompanyDecision(logistics_capacity_units=1_000)
-    result_h = eng_h.close_day()
-    rev_hub = next(r.revenue_rub for r in result_h.reports if r.company_id == co_h.id)
-
-    assert rev_hub > rev_depot, (
-        f"Хаб должен зарабатывать больше склада: {rev_hub} <= {rev_depot}"
+    assert rev_no_order == 0, "Без заявок дистрибьютор не получает дохода"
+    assert rev_with_order >= QTY * FEE, (
+        f"С заявкой дистрибьютор должен получить ≥{QTY * FEE} руб., получил {rev_with_order}"
     )
 
 
