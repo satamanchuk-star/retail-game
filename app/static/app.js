@@ -289,7 +289,8 @@ function renderFacilityFormatOptions() {
   const assetType = company ? FACILITY_ASSET_BY_ROLE[company.role] : null;
   const options = lastFacilityFormats.filter((format) => format.asset_type === assetType);
   facilityFormatSelect.innerHTML = options.map((format) => `<option value="${format.tier}">${format.name} · ${formatRub.format(format.build_cost_rub)}</option>`).join('');
-  facilityFormatsRoot.innerHTML = options.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день</span></div>`).join('') || '<p class="muted">Выберите производителя или дистрибьютора.</p>';
+  const multLabel = (format) => format.asset_type === 'factory' ? `выход ×${format.output_multiplier.toFixed(2)}` : `ставка ×${format.output_multiplier.toFixed(2)}`;
+  facilityFormatsRoot.innerHTML = options.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день · <span class="mult">${multLabel(format)}</span></span></div>`).join('') || '<p class="muted">Выберите производителя или дистрибьютора.</p>';
 }
 
 function nextFacilityFormat(assetType, currentTier) {
@@ -316,13 +317,17 @@ function renderFacilityList() {
   const canClose = facilities.length > 1;
   facilityListRoot.innerHTML = facilities.map((facility) => {
     const upgrade = nextFacilityFormat(assetType, facility.facility_format);
+    const currentFmt = lastFacilityFormats.find((f) => f.tier === facility.facility_format);
+    const currentMultLabel = currentFmt
+      ? (assetType === 'factory' ? `выход ×${currentFmt.output_multiplier.toFixed(2)}` : `ставка ×${currentFmt.output_multiplier.toFixed(2)}`)
+      : '';
     const upgradeButton = upgrade
-      ? `<button type="button" class="secondary" data-action="upgrade" data-company="${company.id}" data-asset="${facility.id}" data-tier="${upgrade.tier}">До «${upgrade.name}» (+${formatRub.format(upgrade.build_cost_rub)})</button>`
+      ? `<button type="button" class="secondary" data-action="upgrade" data-company="${company.id}" data-asset="${facility.id}" data-tier="${upgrade.tier}">До «${upgrade.name}» (+${formatRub.format(upgrade.build_cost_rub - (currentFmt?.build_cost_rub ?? 0))}, ${assetType === 'factory' ? 'выход' : 'ставка'} ×${upgrade.output_multiplier.toFixed(2)})</button>`
       : '<span class="muted">Максимальный формат</span>';
     const closeButton = canClose
       ? `<button type="button" class="ghost" data-action="close" data-company="${company.id}" data-asset="${facility.id}">Закрыть</button>`
       : '';
-    return `<div class="store-row"><div><b>${facility.name}</b><small>Мощность: ${facility.capacity_units_per_day} ед./день · расходы: ${formatRub.format(facility.fixed_cost_rub_per_day)}/день</small></div><div class="store-row-actions">${upgradeButton}${closeButton}</div></div>`;
+    return `<div class="store-row"><div><b>${facility.name}</b><small>Мощность: ${facility.capacity_units_per_day} ед./день · расходы: ${formatRub.format(facility.fixed_cost_rub_per_day)}/день${currentMultLabel ? ` · <span class="mult">${currentMultLabel}</span>` : ''}</small></div><div class="store-row-actions">${upgradeButton}${closeButton}</div></div>`;
   }).join('');
 }
 
@@ -338,7 +343,7 @@ function renderStoreControls(state, formats) {
     storeCompanySelect.value = previous;
   }
   storeFormatSelect.innerHTML = formats.map((format) => `<option value="${format.store_format}">${format.name} · ${formatRub.format(format.build_cost_rub)}</option>`).join('');
-  storeFormatsRoot.innerHTML = formats.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день</span></div>`).join('');
+  storeFormatsRoot.innerHTML = formats.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день · <span class="mult">спрос ×${format.demand_multiplier.toFixed(2)}</span></span></div>`).join('');
   renderStoreList();
 }
 
@@ -361,13 +366,15 @@ function renderStoreList() {
   const canClose = stores.length > 1;
   storeListRoot.innerHTML = stores.map((store) => {
     const upgrade = nextStoreFormat(store.store_format);
+    const currentFmt = lastStoreFormats.find((f) => f.store_format === store.store_format);
     const upgradeButton = upgrade
-      ? `<button type="button" class="secondary" data-action="upgrade" data-company="${companyId}" data-asset="${store.id}" data-format="${upgrade.store_format}">До «${upgrade.name}» (+${formatRub.format(upgrade.build_cost_rub)})</button>`
+      ? `<button type="button" class="secondary" data-action="upgrade" data-company="${companyId}" data-asset="${store.id}" data-format="${upgrade.store_format}">До «${upgrade.name}» (+${formatRub.format(upgrade.build_cost_rub - (currentFmt?.build_cost_rub ?? 0))}, спрос ×${upgrade.demand_multiplier.toFixed(2)})</button>`
       : '<span class="muted">Максимальный формат</span>';
     const closeButton = canClose
       ? `<button type="button" class="ghost" data-action="close" data-company="${companyId}" data-asset="${store.id}">Закрыть</button>`
       : '';
-    return `<div class="store-row"><div><b>${store.name}</b><small>Мощность: ${store.capacity_units_per_day} ед./день · расходы: ${formatRub.format(store.fixed_cost_rub_per_day)}/день</small></div><div class="store-row-actions">${upgradeButton}${closeButton}</div></div>`;
+    const demandLabel = currentFmt ? `спрос ×${currentFmt.demand_multiplier.toFixed(2)}` : '';
+    return `<div class="store-row"><div><b>${store.name}</b><small>Мощность: ${store.capacity_units_per_day} ед./день · расходы: ${formatRub.format(store.fixed_cost_rub_per_day)}/день${demandLabel ? ` · <span class="mult">${demandLabel}</span>` : ''}</small></div><div class="store-row-actions">${upgradeButton}${closeButton}</div></div>`;
   }).join('');
 }
 

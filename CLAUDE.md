@@ -12,6 +12,7 @@
 ```bash
 source .venv/bin/activate
 ruff check .          # линтер (должен быть чистым)
+ruff check --fix .   # авто-исправление импортов и стиля
 pytest -q             # тесты (должны быть зелёными)
 uvicorn app.main:app --reload   # локальный запуск
 ```
@@ -19,11 +20,14 @@ uvicorn app.main:app --reload   # локальный запуск
 
 ## Архитектура
 - `app/domain/models.py` — Pydantic-модели (вход/выход API + доменное ядро).
-- `app/domain/balance.py` — стартовый баланс мира (регионы, товары, сырьё, рецепты, объекты, форматы магазинов).
+- `app/domain/balance.py` — стартовый баланс мира (регионы, товары, сырьё, рецепты, объекты, форматы).
 - `app/domain/engine.py` — `GameEngine`: вся игровая логика и `close_day()`.
+- `app/domain/auth.py` — регистрация, вход, сессии, `_ensure_can_manage_company()`.
+- `app/domain/simulation.py` / `demo.py` — прогон симуляции и 7-дневное демо.
+- `app/domain/ratings.py` / `project_status.py` — рейтинги рынка и статус разработки.
 - `app/api/routes.py` — HTTP-эндпоинты (префикс `/api`). Глобальные `_state/_engine/_auth`.
 - `tests/` — pytest, по файлу на подсистему.
-- `docs/` — `HANDOFF.md` (полный план на 12 этапов), `DEVELOPMENT_STATUS.md` (актуальный статус), `TECHNICAL_SPEC.md`, `ROLE.md`.
+- `docs/` — `HANDOFF.md` (план 12 этапов), `DEVELOPMENT_STATUS.md` (актуальный статус), `TECHNICAL_SPEC.md`, `ITERATION_PROTOCOL.md`, `API_REFERENCE.md`, `DEVELOPER_ACTION_PLAN.md`.
 
 ## Правила работы (из ROLE.md / ITERATION_PROTOCOL.md)
 - Один вертикальный слой за итерацию: модель → баланс → движок → API → тест. Не тащить весь scope сразу.

@@ -234,3 +234,8 @@ th { color: var(--muted); font-weight: 700; }
 .store-row-actions button {
   width: auto;
 }
+
+.mult {
+  color: #2a9d5c;
+  font-weight: 600;
+}
