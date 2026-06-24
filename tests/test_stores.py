@@ -2,7 +2,7 @@
 
 import pytest
 from app.domain.balance import STORE_FORMATS
-from app.domain.engine import GameEngine, build_initial_state
+from app.domain.engine import STORE_CLOSE_REFUND, GameEngine, build_initial_state
 from app.domain.models import AssetType, CompanyCreate, Role, StoreFormat
 from app.main import app
 from fastapi.testclient import TestClient
@@ -14,6 +14,23 @@ def _store_capacity(engine: GameEngine, company_id: str) -> int:
         for asset in engine.state.assets
         if asset.company_id == company_id and asset.asset_type == AssetType.STORE
     )
+
+
+def _company_stores(engine: GameEngine, company_id: str) -> list:
+    return [
+        asset
+        for asset in engine.state.assets
+        if asset.company_id == company_id and asset.asset_type == AssetType.STORE
+    ]
+
+
+def _make_retailer(engine: GameEngine, cash: int | None = None):
+    company = engine.create_company(
+        CompanyCreate(name="Сеть", role=Role.RETAILER, region_id="central")
+    )
+    if cash is not None:
+        company.cash_rub = cash
+    return company
 
 
 def test_build_store_adds_capacity_and_spends_cash() -> None:
@@ -58,6 +75,58 @@ def test_build_store_requires_enough_cash() -> None:
 
     with pytest.raises(ValueError, match="Недостаточно средств"):
         engine.build_store(company.id, StoreFormat.SUPERMARKET)
+
+
+def test_upgrade_store_raises_capacity_and_charges_difference() -> None:
+    state = build_initial_state()
+    engine = GameEngine(state)
+    company = _make_retailer(engine, cash=20_000_000)
+    store = _company_stores(engine, company.id)[0]
+    cash_before = company.cash_rub
+    current_cost = STORE_FORMATS[store.store_format].build_cost_rub
+    target = STORE_FORMATS[StoreFormat.SUPERMARKET]
+
+    engine.upgrade_store(company.id, store.id, StoreFormat.SUPERMARKET)
+
+    assert store.store_format == StoreFormat.SUPERMARKET
+    assert store.capacity_units_per_day == target.capacity_units_per_day
+    assert company.cash_rub == cash_before - (target.build_cost_rub - current_cost)
+
+
+def test_upgrade_store_rejects_same_or_lower_format() -> None:
+    state = build_initial_state()
+    engine = GameEngine(state)
+    company = _make_retailer(engine, cash=20_000_000)
+    store = _company_stores(engine, company.id)[0]
+
+    with pytest.raises(ValueError, match="более крупный формат"):
+        engine.upgrade_store(company.id, store.id, StoreFormat.KIOSK)
+
+
+def test_close_store_refunds_and_removes() -> None:
+    state = build_initial_state()
+    engine = GameEngine(state)
+    company = _make_retailer(engine)
+    kiosk = engine.build_store(company.id, StoreFormat.KIOSK)
+    cash_before = company.cash_rub
+    expected_refund = int(
+        STORE_FORMATS[StoreFormat.KIOSK].build_cost_rub * STORE_CLOSE_REFUND
+    )
+
+    engine.close_store(company.id, kiosk.id)
+
+    assert all(asset.id != kiosk.id for asset in engine.state.assets)
+    assert company.cash_rub == cash_before + expected_refund
+
+
+def test_close_last_store_rejected() -> None:
+    state = build_initial_state()
+    engine = GameEngine(state)
+    company = _make_retailer(engine)
+    store = _company_stores(engine, company.id)[0]
+
+    with pytest.raises(ValueError, match="последний магазин"):
+        engine.close_store(company.id, store.id)
 
 
 def test_store_formats_endpoint_lists_presets() -> None:

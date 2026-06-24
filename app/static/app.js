@@ -32,6 +32,9 @@ const storeForm = document.querySelector('#store-form');
 const storeCompanySelect = document.querySelector('#store-company-select');
 const storeFormatSelect = document.querySelector('#store-format-select');
 const storeFormatsRoot = document.querySelector('#store-formats');
+const storeListRoot = document.querySelector('#store-list');
+let lastState = null;
+let lastStoreFormats = [];
 const demoSummary = document.querySelector('#demo-summary');
 const profitChart = document.querySelector('#profit-chart');
 const demoTable = document.querySelector('#demo-table');
@@ -249,12 +252,48 @@ async function fetchStoreFormats() {
 }
 
 function renderStoreControls(state, formats) {
+  lastState = state;
+  lastStoreFormats = formats;
   const retailers = state.companies.filter((company) => company.role === 'retailer');
+  const previous = storeCompanySelect.value;
   storeCompanySelect.innerHTML = retailers.length
     ? retailers.map((company) => `<option value="${company.id}">${company.name} · ${formatRub.format(company.cash_rub)}</option>`).join('')
     : '<option value="">Нет ритейлеров — создайте компанию-ритейлера</option>';
+  if (previous && retailers.some((company) => company.id === previous)) {
+    storeCompanySelect.value = previous;
+  }
   storeFormatSelect.innerHTML = formats.map((format) => `<option value="${format.store_format}">${format.name} · ${formatRub.format(format.build_cost_rub)}</option>`).join('');
   storeFormatsRoot.innerHTML = formats.map((format) => `<div class="store-format"><b>${format.name}</b><small>Постройка: ${formatRub.format(format.build_cost_rub)}</small><span>Мощность: ${format.capacity_units_per_day} ед./день · расходы: ${formatRub.format(format.fixed_cost_rub_per_day)}/день</span></div>`).join('');
+  renderStoreList();
+}
+
+function nextStoreFormat(currentFormat) {
+  const order = lastStoreFormats.slice().sort((left, right) => left.build_cost_rub - right.build_cost_rub);
+  const currentCost = lastStoreFormats.find((format) => format.store_format === currentFormat)?.build_cost_rub ?? -1;
+  return order.find((format) => format.build_cost_rub > currentCost) || null;
+}
+
+function renderStoreList() {
+  if (!lastState) {
+    return;
+  }
+  const companyId = storeCompanySelect.value;
+  const stores = (lastState.assets || []).filter((asset) => asset.company_id === companyId && asset.asset_type === 'store');
+  if (!companyId || !stores.length) {
+    storeListRoot.innerHTML = '<p class="muted">У выбранной компании нет магазинов.</p>';
+    return;
+  }
+  const canClose = stores.length > 1;
+  storeListRoot.innerHTML = stores.map((store) => {
+    const upgrade = nextStoreFormat(store.store_format);
+    const upgradeButton = upgrade
+      ? `<button type="button" class="secondary" data-action="upgrade" data-company="${companyId}" data-asset="${store.id}" data-format="${upgrade.store_format}">До «${upgrade.name}» (+${formatRub.format(upgrade.build_cost_rub)})</button>`
+      : '<span class="muted">Максимальный формат</span>';
+    const closeButton = canClose
+      ? `<button type="button" class="ghost" data-action="close" data-company="${companyId}" data-asset="${store.id}">Закрыть</button>`
+      : '';
+    return `<div class="store-row"><div><b>${store.name}</b><small>Мощность: ${store.capacity_units_per_day} ед./день · расходы: ${formatRub.format(store.fixed_cost_rub_per_day)}/день</small></div><div class="store-row-actions">${upgradeButton}${closeButton}</div></div>`;
+  }).join('');
 }
 
 async function render() {
@@ -335,6 +374,26 @@ storeForm.addEventListener('submit', async (event) => {
   }
   try {
     await api(`/api/companies/${companyId}/stores`, { method: 'POST', body: JSON.stringify(payload) });
+    await render();
+  } catch (error) {
+    newsRoot.innerHTML = `<li>${error.message}</li>`;
+  }
+});
+
+storeCompanySelect.addEventListener('change', renderStoreList);
+
+storeListRoot.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) {
+    return;
+  }
+  const { action, company, asset, format } = button.dataset;
+  try {
+    if (action === 'upgrade') {
+      await api(`/api/companies/${company}/stores/${asset}/upgrade`, { method: 'POST', body: JSON.stringify({ new_format: format }) });
+    } else if (action === 'close') {
+      await api(`/api/companies/${company}/stores/${asset}`, { method: 'DELETE' });
+    }
     await render();
   } catch (error) {
     newsRoot.innerHTML = `<li>${error.message}</li>`;

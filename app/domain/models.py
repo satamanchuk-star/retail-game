@@ -142,6 +142,12 @@ class StoreBuildRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=60)
 
 
+class StoreUpgradeRequest(BaseModel):
+    """Запрос на повышение формата существующего магазина."""
+
+    new_format: StoreFormat
+
+
 class CompanyCreate(BaseModel):
     """Запрос создания компании для входа нового игрока в рынок."""
 

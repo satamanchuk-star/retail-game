@@ -204,3 +204,33 @@ th { color: var(--muted); font-weight: 700; }
   color: #64748b;
   margin-top: 4px;
 }
+
+.subhead {
+  margin: 16px 0 8px;
+  font-size: 15px;
+}
+.store-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #ffffff;
+}
+.store-row small {
+  display: block;
+  color: #64748b;
+  margin-top: 4px;
+}
+.store-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.store-row-actions button {
+  width: auto;
+}

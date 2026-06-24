@@ -31,6 +31,7 @@ from app.domain.models import (
     RatingBoard,
     StoreBuildRequest,
     StoreFormatOption,
+    StoreUpgradeRequest,
     User,
     UserLogin,
     UserRegister,
@@ -220,6 +221,45 @@ async def build_store(
     _ensure_can_manage_company(company_id, user)
     try:
         asset = _engine.build_store(company_id, payload.store_format, payload.name)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/stores/{asset_id}/upgrade",
+    response_model=BusinessAsset,
+)
+async def upgrade_store(
+    company_id: str,
+    asset_id: str,
+    payload: StoreUpgradeRequest,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Повысить формат магазина ритейлера, доплатив разницу постройки."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.upgrade_store(company_id, asset_id, payload.new_format)
+        await _save_state()
+        return asset
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/companies/{company_id}/stores/{asset_id}",
+    response_model=BusinessAsset,
+)
+async def close_store(
+    company_id: str,
+    asset_id: str,
+    user: OptionalUser,
+) -> BusinessAsset:
+    """Закрыть магазин ритейлера с частичным возвратом вложений."""
+    _ensure_can_manage_company(company_id, user)
+    try:
+        asset = _engine.close_store(company_id, asset_id)
         await _save_state()
         return asset
     except ValueError as exc:

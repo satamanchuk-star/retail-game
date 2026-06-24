@@ -43,6 +43,7 @@ from app.domain.models import (
 
 VAT_RATE = 0.20
 PROFIT_TAX_RATE = 0.20
+STORE_CLOSE_REFUND = 0.40
 
 STARTING_CASH_BY_ROLE: dict[Role, int] = {
     Role.RETAILER: 7_500_000,
@@ -155,6 +156,75 @@ class GameEngine:
             0,
             f"Компания «{company.name}» открыла новый объект: {asset.name}.",
         )
+        return asset
+
+    def upgrade_store(
+        self, company_id: str, asset_id: str, new_format: StoreFormat
+    ) -> BusinessAsset:
+        """Повысить формат магазина, доплатив разницу в стоимости постройки."""
+        company = self._require_company(company_id)
+        asset = self._require_store(company_id, asset_id)
+        new_preset = STORE_FORMATS.get(new_format)
+        if new_preset is None:
+            raise ValueError("Неизвестный формат магазина")
+        current_cost = (
+            STORE_FORMATS[asset.store_format].build_cost_rub
+            if asset.store_format in STORE_FORMATS
+            else 0
+        )
+        if new_preset.build_cost_rub <= current_cost:
+            raise ValueError("Апгрейд возможен только на более крупный формат")
+        upgrade_cost = new_preset.build_cost_rub - current_cost
+        if company.cash_rub < upgrade_cost:
+            raise ValueError("Недостаточно средств на апгрейд магазина")
+
+        company.cash_rub -= upgrade_cost
+        asset.store_format = new_format
+        asset.capacity_units_per_day = new_preset.capacity_units_per_day
+        asset.fixed_cost_rub_per_day = new_preset.fixed_cost_rub_per_day
+        asset.storage_type = new_preset.storage_type
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» провела апгрейд: {asset.name} → {new_preset.name}.",
+        )
+        return asset
+
+    def close_store(self, company_id: str, asset_id: str) -> BusinessAsset:
+        """Закрыть магазин, вернув часть вложений и сняв постоянные расходы."""
+        company = self._require_company(company_id)
+        asset = self._require_store(company_id, asset_id)
+        stores = self._company_assets(company_id, AssetType.STORE)
+        if len(stores) <= 1:
+            raise ValueError("Нельзя закрыть последний магазин компании")
+
+        refund = 0
+        if asset.store_format in STORE_FORMATS:
+            refund = int(
+                STORE_FORMATS[asset.store_format].build_cost_rub * STORE_CLOSE_REFUND
+            )
+        company.cash_rub += refund
+        self.state.assets = [item for item in self.state.assets if item.id != asset.id]
+        self.state.news.insert(
+            0,
+            f"Компания «{company.name}» закрыла объект {asset.name} "
+            f"(возврат {refund} ₽).",
+        )
+        return asset
+
+    def _require_store(self, company_id: str, asset_id: str) -> BusinessAsset:
+        """Найти магазин компании или сообщить понятную ошибку."""
+        asset = next(
+            (
+                item
+                for item in self.state.assets
+                if item.id == asset_id and item.company_id == company_id
+            ),
+            None,
+        )
+        if asset is None:
+            raise ValueError("Магазин не найден")
+        if asset.asset_type != AssetType.STORE:
+            raise ValueError("Объект не является магазином")
         return asset
 
     def issue_loan(self, payload: LoanCreate) -> Loan:
