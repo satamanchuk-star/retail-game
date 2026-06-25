@@ -68,6 +68,8 @@ const projectRoadmapRoot = document.querySelector('#project-roadmap');
 const authForm = document.querySelector('#auth-form');
 const authStatusRoot = document.querySelector('#auth-status');
 const logoutButton = document.querySelector('#logout');
+const seasonIndicator = document.querySelector('#season-indicator');
+const gameBanner = document.querySelector('#game-banner');
 let accessToken = localStorage.getItem('profitChainAccessToken');
 let currentUser = JSON.parse(localStorage.getItem('profitChainUser') || 'null');
 
@@ -98,6 +100,10 @@ async function fetchPersistenceStatus() {
 
 async function fetchDatabaseStatus() {
   return api('/api/database/status');
+}
+
+async function fetchGameStatus() {
+  return api('/api/game-status');
 }
 
 async function fetchProjectStatus() {
@@ -218,12 +224,40 @@ function renderRawMaterials(state) {
   rawMaterialsRoot.innerHTML = recipeCards.concat(inventoryCards).join('') || '<p class="muted">Сырьё появится у производителей.</p>';
 }
 
+const SEASON_EMOJI = { 'Весна': '🌱', 'Лето': '☀️', 'Осень': '🍂', 'Зима': '❄️' };
+
+function renderGameStatus(status) {
+  if (seasonIndicator) {
+    const emoji = SEASON_EMOJI[status.season_name] || '';
+    const dayPart = lastState?.day != null ? ` · день ${lastState.day}` : '';
+    seasonIndicator.hidden = false;
+    seasonIndicator.textContent = `${emoji} ${status.season_name}${dayPart}`;
+  }
+  if (!gameBanner) return;
+  if (status.game_over) {
+    const who = status.winner_name ? `«${status.winner_name}»` : 'Никто';
+    gameBanner.className = 'game-banner victory';
+    gameBanner.innerHTML = `<strong>🏆 Игра окончена.</strong> Победитель: ${who}.`;
+    gameBanner.hidden = false;
+  } else if (status.bankrupt_companies && status.bankrupt_companies.length) {
+    gameBanner.className = 'game-banner alert';
+    gameBanner.innerHTML = `<strong>⚠️ Банкротства на рынке:</strong> компаний выбыло — ${status.bankrupt_companies.length}.`;
+    gameBanner.hidden = false;
+  } else {
+    gameBanner.hidden = true;
+    gameBanner.innerHTML = '';
+  }
+}
+
 function renderCompanies(state) {
   const reports = new Map(state.last_reports.map((report) => [report.company_id, report]));
   companiesRoot.innerHTML = state.companies.map((company) => {
     const report = reports.get(company.id);
     const reportLine = report ? `Прибыль дня: ${formatRub.format(report.profit_rub)} · Продано: ${report.sold_units} · Доставлено: ${report.delivered_units}` : 'Отчёта за день пока нет';
-    return `<div class="company"><b>${company.name}</b><small>${roleLabel(company.role)} · ${formatRub.format(company.cash_rub)} · репутация ${company.reputation}</small><span>${reportLine}</span></div>`;
+    const bankrupt = company.status === 'bankrupt';
+    const icon = bankrupt ? '💀 ' : (company.is_npc ? '🤖 ' : '');
+    const cls = bankrupt ? 'company bankrupt' : 'company';
+    return `<div class="${cls}"><b>${icon}${company.name}</b><small>${roleLabel(company.role)} · ${formatRub.format(company.cash_rub)} · репутация ${company.reputation}</small><span>${reportLine}</span></div>`;
   }).join('');
 }
 
@@ -497,7 +531,7 @@ function renderDeliveryOrders(orders, state) {
 }
 
 async function render() {
-  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory] = await Promise.all([
+  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory, gameStatus] = await Promise.all([
     fetchState(),
     fetchRatings(),
     fetchPersistenceStatus(),
@@ -509,6 +543,7 @@ async function render() {
     fetchFacilityFormats(),
     api('/api/market-events'),
     api('/api/prices'),
+    fetchGameStatus(),
   ]);
   lastState = state;
   lastMarketEvents = marketEvents;
@@ -524,6 +559,7 @@ async function render() {
   renderInventoryBatches(state);
   renderRawMaterials(state);
   renderCompanies(state);
+  renderGameStatus(gameStatus);
   renderContracts(state);
   renderBanks(state);
   renderLoans(state);

@@ -79,7 +79,40 @@ button {
   background: #f8faff;
 }
 .company small, .company span { color: var(--muted); }
+.company.bankrupt { background: #fdf2f2; border-color: #f3c0c0; opacity: 0.75; }
+.company.bankrupt b { color: #b4232a; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+
+/* Итерация 9: сезонный индикатор и баннер статуса игры */
+.season-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: rgba(23, 105, 255, 0.12);
+  color: var(--brand);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: middle;
+}
+.game-banner {
+  border-radius: 22px;
+  padding: 18px 24px;
+  font-size: 18px;
+  border: 1px solid var(--line);
+}
+.game-banner.victory {
+  background: linear-gradient(135deg, #e6fff4, #d6f3ff);
+  border-color: #9fe7c8;
+  color: #0a7a52;
+  box-shadow: 0 18px 50px rgba(13, 159, 110, 0.18);
+}
+.game-banner.alert {
+  background: #fdf2f2;
+  border-color: #f3c0c0;
+  color: #b4232a;
+}
 button.secondary { background: #0d9f6e; box-shadow: 0 16px 35px rgba(13, 159, 110, 0.22); }
 button.ghost { color: var(--ink); background: #edf2ff; box-shadow: none; }
 .chart {
