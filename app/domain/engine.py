@@ -520,6 +520,8 @@ class GameEngine:
     MAX_NEW_LINES_PER_DAY = 2
     # Транзитные расходы дистрибьютора на единицу × риск маршрута (топливо/потери/страховка).
     TRANSIT_RISK_COST_PER_UNIT = 45
+    # Сколько заявок на доставку NPC-дистрибьютор создаёт за день (логистический спрос).
+    MAX_NPC_LOGISTICS_ORDERS_PER_DAY = 4
 
     def _check_bankruptcy_and_victory(
         self,
@@ -1307,6 +1309,64 @@ class GameEngine:
                 if is_new_line and needed < needed_before:
                     new_lines_added += 1
 
+    def _npc_generate_logistics_orders(self, distributor: Company) -> None:
+        """NPC-дистрибьютор создаёт заявки: излишки производителя → дефицит ритейлера в другом регионе."""
+        product_by_id = {p.id: p for p in self.state.products}
+        producers = [
+            c for c in self.state.companies
+            if c.is_npc and c.role == Role.PRODUCER and c.status == CompanyStatus.ACTIVE
+        ]
+        retailers = [
+            c for c in self.state.companies
+            if c.is_npc and c.role == Role.RETAILER and c.status == CompanyStatus.ACTIVE
+        ]
+        active_routes = {
+            (o.shipper_id, o.receiver_id, o.product_id)
+            for o in self.state.delivery_orders
+            if o.status in (DeliveryStatus.PENDING, DeliveryStatus.ACCEPTED)
+        }
+        created = 0
+        for producer in producers:
+            if created >= self.MAX_NPC_LOGISTICS_ORDERS_PER_DAY:
+                break
+            for product_id, qty in self.state.inventories.get(producer.id, {}).items():
+                if created >= self.MAX_NPC_LOGISTICS_ORDERS_PER_DAY:
+                    break
+                product = product_by_id.get(product_id)
+                if product is None:
+                    continue
+                surplus = qty - product.base_daily_demand * 3  # сверх локального сбыта
+                if surplus < 200:
+                    continue
+                receiver = next(
+                    (
+                        r for r in retailers
+                        if r.region_id != producer.region_id
+                        and self.state.inventories.get(r.id, {}).get(product_id, 0)
+                        < product.base_daily_demand
+                    ),
+                    None,
+                )
+                if receiver is None:
+                    continue
+                if (producer.id, receiver.id, product_id) in active_routes:
+                    continue
+                self.state.delivery_orders.append(
+                    DeliveryOrder(
+                        status=DeliveryStatus.ACCEPTED,
+                        shipper_id=producer.id,
+                        distributor_id=distributor.id,
+                        receiver_id=receiver.id,
+                        product_id=product_id,
+                        quantity=min(int(surplus), 500),
+                        fee_rub_per_unit=max(5, int(product.base_price_rub * 0.16)),
+                        due_day=self.state.day + 1,
+                        created_day=self.state.day,
+                    )
+                )
+                active_routes.add((producer.id, receiver.id, product_id))
+                created += 1
+
     def _apply_npc_decisions(self) -> None:
         """Сформировать решения на день для всех NPC-компаний."""
         for company in self.state.companies:
@@ -1322,6 +1382,9 @@ class GameEngine:
                         and order.status == DeliveryStatus.PENDING
                     ):
                         order.status = DeliveryStatus.ACCEPTED
+                # …и сам ищет работу: возит излишки производителя нуждающемуся
+                # ритейлеру в другом регионе (логистический спрос в одиночке)
+                self._npc_generate_logistics_orders(company)
             elif company.role == Role.RETAILER:
                 inventory = self.state.inventories.get(company.id, {})
                 total_stock = sum(inventory.values())

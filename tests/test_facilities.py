@@ -166,7 +166,11 @@ def test_complex_produces_more_than_workshop_from_same_raw_materials() -> None:
 
 
 def test_distributor_earns_only_from_delivery_orders() -> None:
-    """Дистрибьютор без заявок не получает дохода; с принятой заявкой — получает."""
+    """Доход дистрибьютора идёт с заявок: явная заявка добавляет плату поверх авто-спроса.
+
+    NPC-дистрибьютор теперь сам генерирует логистический спрос (Фаза 4.2), поэтому
+    базовый доход уже не ноль; проверяем, что явная заявка увеличивает его на свою плату.
+    """
     from app.domain.models import DeliveryOrderCreate
 
     FEE = 20
@@ -198,9 +202,11 @@ def test_distributor_earns_only_from_delivery_orders() -> None:
     result_b = eng_b.close_day()
     rev_with_order = next(r.revenue_rub for r in result_b.reports if r.company_id == npc_dist_b.id)
 
-    assert rev_no_order == 0, "Без заявок дистрибьютор не получает дохода"
-    assert rev_with_order >= QTY * FEE, (
-        f"С заявкой дистрибьютор должен получить ≥{QTY * FEE} руб., получил {rev_with_order}"
+    # Авто-генерация детерминирована → у обоих движков одинаковый базовый авто-доход;
+    # явная заявка добавляет свою плату (QTY×FEE) поверх него.
+    assert rev_with_order >= rev_no_order + QTY * FEE, (
+        f"Явная заявка должна добавить ≥{QTY * FEE} руб.: "
+        f"без неё {rev_no_order}, с ней {rev_with_order}"
     )
 
 

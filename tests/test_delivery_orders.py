@@ -227,6 +227,9 @@ def test_npc_distributor_auto_accepts_pending_orders(engine: GameEngine) -> None
 
 def test_cancelled_order_not_fulfilled(engine: GameEngine) -> None:
     """Отменённая заявка не исполняется при close_day."""
+    # Изолируем примитив: отключаем авто-логистику NPC (Фаза 4.2), иначе дистрибьютор
+    # доставляет посторонние авто-заявки и delivered_units был бы не нулевой.
+    engine.MAX_NPC_LOGISTICS_ORDERS_PER_DAY = 0
     npc_prod = _npc(engine, "producer")
     npc_dist = _npc(engine, "distributor")
     player = next(c for c in engine.state.companies if not c.is_npc)

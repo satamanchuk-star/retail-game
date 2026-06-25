@@ -1,5 +1,7 @@
 """Тесты логистики (Фаза 4.1): logistics_risk региона влияет на экономику доставки."""
 
+import random
+
 from app.domain.engine import GameEngine, build_initial_state
 from app.domain.models import (
     CompanyDayReport,
@@ -52,3 +54,21 @@ def test_risky_route_costs_distributor_more_than_safe_route() -> None:
     safe = _distributor_profit_for_route("volga", "volga")     # риск ~0.10
     risky = _distributor_profit_for_route("north", "east_port")  # риск ~0.32
     assert safe > risky, "logistics_risk не влияет: рискованный маршрут должен быть дороже"
+
+
+def test_npc_distributor_generates_and_fulfills_logistics() -> None:
+    """Фаза 4.2: NPC-дистрибьютор сам создаёт спрос и больше не простаивает."""
+    random.seed(0)
+    engine = GameEngine(build_initial_state())
+    distributor = next(c for c in engine.state.companies if c.role == Role.DISTRIBUTOR)
+    start_cash = distributor.cash_rub
+
+    for _ in range(20):
+        engine.close_day()
+
+    fulfilled = [
+        o for o in engine.state.delivery_orders
+        if o.distributor_id == distributor.id and o.status == DeliveryStatus.FULFILLED
+    ]
+    assert len(fulfilled) > 0, "дистрибьютор простаивает: нет выполненных авто-заявок"
+    assert distributor.cash_rub != start_cash, "роль дистрибьютора неактивна"
