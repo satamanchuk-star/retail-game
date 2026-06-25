@@ -71,6 +71,7 @@ const logoutButton = document.querySelector('#logout');
 const seasonIndicator = document.querySelector('#season-indicator');
 const gameBanner = document.querySelector('#game-banner');
 const leaderboardRoot = document.querySelector('#leaderboard');
+const advisorRoot = document.querySelector('#advisor');
 let accessToken = localStorage.getItem('profitChainAccessToken');
 let currentUser = JSON.parse(localStorage.getItem('profitChainUser') || 'null');
 
@@ -109,6 +110,12 @@ async function fetchGameStatus() {
 
 async function fetchLeaderboard() {
   return api('/api/leaderboard');
+}
+
+async function fetchAdvisor() {
+  // Советуем по выбранной в селекторе компании, иначе по стартовой «player»
+  const cid = (companySelect && companySelect.value) || 'player';
+  return api(`/api/advisor?company_id=${encodeURIComponent(cid)}`);
 }
 
 async function fetchProjectStatus() {
@@ -257,6 +264,20 @@ function renderGameStatus(status) {
     gameBanner.hidden = true;
     gameBanner.innerHTML = '';
   }
+}
+
+const ADVISOR_ICON = { ok: '✅', info: '💡', warning: '⚠️', danger: '🛑' };
+
+function renderAdvisor(tips) {
+  if (!advisorRoot) return;
+  if (!tips || !tips.length) {
+    advisorRoot.innerHTML = '<p class="muted">Нет подсказок.</p>';
+    return;
+  }
+  advisorRoot.innerHTML = tips.map((t) => {
+    const icon = ADVISOR_ICON[t.severity] || '•';
+    return `<div class="tip tip-${t.severity}"><span class="tip-icon">${icon}</span><span>${t.message}</span></div>`;
+  }).join('');
 }
 
 function renderLeaderboard(entries) {
@@ -564,7 +585,7 @@ function renderDeliveryOrders(orders, state) {
 }
 
 async function render() {
-  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory, gameStatus, leaderboard] = await Promise.all([
+  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory, gameStatus, leaderboard, advisor] = await Promise.all([
     fetchState(),
     fetchRatings(),
     fetchPersistenceStatus(),
@@ -578,6 +599,7 @@ async function render() {
     api('/api/prices'),
     fetchGameStatus(),
     fetchLeaderboard(),
+    fetchAdvisor(),
   ]);
   lastState = state;
   lastMarketEvents = marketEvents;
@@ -595,6 +617,7 @@ async function render() {
   renderCompanies(state);
   renderGameStatus(gameStatus);
   renderLeaderboard(leaderboard);
+  renderAdvisor(advisor);
   renderContracts(state);
   renderBanks(state);
   renderLoans(state);

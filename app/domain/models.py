@@ -671,6 +671,13 @@ class LeaderboardEntry(BaseModel):
     total_companies: int = Field(ge=0)
 
 
+class AdvisorTip(BaseModel):
+    """Подсказка советника: что происходит и что с этим делать."""
+
+    severity: str  # ok | info | warning | danger
+    message: str
+
+
 class GameStatus(BaseModel):
     """Публичный статус текущей партии."""
 

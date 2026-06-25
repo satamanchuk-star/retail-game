@@ -19,6 +19,7 @@ from app.domain.balance import (
     STORE_FORMATS,
 )
 from app.domain.models import (
+    AdvisorTip,
     AssetType,
     BusinessAsset,
     Company,
@@ -582,6 +583,91 @@ class GameEngine:
             )
             for index, company in enumerate(ordered, start=1)
         ]
+
+    def build_advice(self, company_id: str) -> list[AdvisorTip]:
+        """Советник: читаемые подсказки «что происходит и что делать» по компании."""
+        company = next((c for c in self.state.companies if c.id == company_id), None)
+        if company is None:
+            return [AdvisorTip(severity="info", message="Компания не найдена.")]
+        if company.status == CompanyStatus.BANKRUPT:
+            return [AdvisorTip(severity="danger", message="Компания банкрот — партия для неё окончена.")]
+
+        tips: list[AdvisorTip] = []
+
+        # Финансы — для всех ролей
+        if company.cash_rub < 0:
+            tips.append(AdvisorTip(
+                severity="danger",
+                message="Кэш в минусе — подними цены, сократи закупки или возьми кредит, иначе банкротство.",
+            ))
+        elif company.cash_rub < 2_000_000:
+            tips.append(AdvisorTip(
+                severity="warning",
+                message="Низкий запас кэша — следи за расходами и не перетаривайся.",
+            ))
+
+        report = next(
+            (r for r in self.state.last_reports if r.company_id == company_id), None
+        )
+
+        if company.role == Role.RETAILER:
+            inventory = self.state.inventories.get(company_id, {})
+            total_stock = sum(inventory.values())
+            store_cap = self._daily_capacity(company_id, AssetType.STORE, 1_000)
+            if total_stock > store_cap * 6:
+                tips.append(AdvisorTip(
+                    severity="warning",
+                    message=f"Затоваривание: запас {total_stock:,} ед. при дневной мощности {store_cap:,}. Снизь закупки или цену.",
+                ))
+            stocked = sum(1 for q in inventory.values() if q > 0)
+            if stocked < 6:
+                tips.append(AdvisorTip(
+                    severity="info",
+                    message=f"Узкий ассортимент ({stocked} товаров) — расширь закупки с рынка, чтобы продавать больше.",
+                ))
+            # Конкурент демпингует в твоём регионе
+            rivals = [
+                c for c in self.state.companies
+                if c.role == Role.RETAILER and c.id != company_id
+                and c.region_id == company.region_id and c.status == CompanyStatus.ACTIVE
+            ]
+            my_price = self.state.decisions.get(company_id, CompanyDecision()).target_price_index
+            for rival in rivals:
+                rival_price = self.state.decisions.get(rival.id, CompanyDecision()).target_price_index
+                if rival_price < my_price - 0.15:
+                    tips.append(AdvisorTip(
+                        severity="warning",
+                        message=f"Конкурент «{rival.name}» демпингует в твоём регионе — рискуешь потерять долю.",
+                    ))
+                    break
+
+        elif company.role == Role.PRODUCER:
+            raws = self.state.raw_inventories.get(company_id, {})
+            low = [rid for rid, q in raws.items() if q < 300]
+            if low:
+                tips.append(AdvisorTip(
+                    severity="warning",
+                    message=f"Дефицит сырья ({', '.join(low)}) — докупи, иначе выпуск просядет.",
+                ))
+            if report and report.produced_units == 0:
+                tips.append(AdvisorTip(
+                    severity="info",
+                    message="Завод не выпускал товар в прошлый день — проверь сырьё и мощность.",
+                ))
+
+        elif company.role == Role.DISTRIBUTOR:
+            if report and report.delivered_units == 0:
+                tips.append(AdvisorTip(
+                    severity="info",
+                    message="Нет доставок — прими заявки или вози излишки в дефицитные регионы.",
+                ))
+
+        if not tips:
+            tips.append(AdvisorTip(
+                severity="ok",
+                message="Дела стабильны — оптимизируй цепочку, цены и ассортимент, чтобы оторваться от ботов.",
+            ))
+        return tips
 
     def _ensure_company_assets(self) -> None:
         """Добавить базовые операционные объекты старым состояниям без assets."""

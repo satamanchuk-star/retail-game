@@ -10,6 +10,7 @@ from app.domain.balance import FACILITY_FORMATS, STORE_FORMATS
 from app.domain.demo import run_demo_scenario
 from app.domain.engine import GameEngine, GameOverError
 from app.domain.models import (
+    AdvisorTip,
     AuthToken,
     Bank,
     BusinessAsset,
@@ -645,6 +646,12 @@ async def get_market_events() -> list[MarketEvent]:
 async def get_game_status() -> GameStatus:
     """Текущий статус игры: победитель, банкроты, сезон."""
     return _build_game_status(_state, _engine)
+
+
+@router.get("/advisor", response_model=list[AdvisorTip])
+async def get_advisor(company_id: str = "player") -> list[AdvisorTip]:
+    """Подсказки советника по компании: что происходит и что делать."""
+    return _engine.build_advice(company_id)
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
