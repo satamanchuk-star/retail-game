@@ -34,3 +34,18 @@ class GameSessionRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class LeaderboardSnapshotRow(Base):
+    """Единственная строка: сериализованный список результатов зала славы.
+
+    Зал славы переживает сброс партии, поэтому хранится отдельно от GameState.
+    """
+
+    __tablename__ = "leaderboard_snapshots"
+
+    snapshot_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

@@ -88,7 +88,15 @@ _leaderboard_store = LeaderboardStore(settings.leaderboard_file_path)
 _leaderboard: list[LeaderboardEntry] = _leaderboard_store.load()
 
 
-def _record_game_result(
+async def _persist_leaderboard() -> None:
+    """Сохранить зал славы: в БД (если включена) либо в JSON-файл."""
+    if _db_store.engine is not None:
+        await _db_store.save_leaderboard(_leaderboard)
+    else:
+        _leaderboard_store.save(_leaderboard)
+
+
+async def _record_game_result(
     state: GameState, engine: GameEngine, source: str = "Основная партия"
 ) -> None:
     """Сохранить результат завершённой партии в рейтинг лидеров (один раз)."""
@@ -110,10 +118,10 @@ def _record_game_result(
             total_companies=len(state.companies),
         ),
     )
-    _leaderboard_store.save(_leaderboard)
+    await _persist_leaderboard()
 
 
-def _close_global_day(closure_id: str | None) -> WorldDayResult:
+async def _close_global_day(closure_id: str | None) -> WorldDayResult:
     """Закрыть день основной партии: 409 на завершённой игре + запись в зал славы."""
     was_over = _state.game_over
     try:
@@ -121,11 +129,13 @@ def _close_global_day(closure_id: str | None) -> WorldDayResult:
     except GameOverError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if _state.game_over and not was_over:
-        _record_game_result(_state, _engine)
+        await _record_game_result(_state, _engine)
     return result
 
 
-def _close_session_day(session: GameSession, closure_id: str | None = None) -> WorldDayResult:
+async def _close_session_day(
+    session: GameSession, closure_id: str | None = None
+) -> WorldDayResult:
     """Закрыть день сессии: 409 на завершённой игре + запись результата в зал славы."""
     was_over = session.state.game_over
     try:
@@ -133,7 +143,7 @@ def _close_session_day(session: GameSession, closure_id: str | None = None) -> W
     except GameOverError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if session.state.game_over and not was_over:
-        _record_game_result(session.state, session.engine, source=session.name)
+        await _record_game_result(session.state, session.engine, source=session.name)
     return result
 
 
@@ -157,7 +167,7 @@ def _build_game_status(state: GameState, engine: GameEngine) -> GameStatus:
 
 async def initialize_storage() -> None:
     """Подключить DB-снимок в lifespan, не раскрывая URL наружу."""
-    global _auth, _engine, _state
+    global _auth, _engine, _leaderboard, _state
     await _db_store.connect()
     if _db_store.engine is None:
         return
@@ -165,6 +175,8 @@ async def initialize_storage() -> None:
     _engine = GameEngine(_state)
     _auth = AuthService(_state)
     _registry.init_default(_engine)
+    # В DB-режиме зал славы тоже берём из БД (а не из JSON-файла/памяти)
+    _leaderboard = await _db_store.load_leaderboard()
 
 
 async def shutdown_storage() -> None:
@@ -483,7 +495,7 @@ async def close_day(
     payload: Annotated[DayClosureRequest | None, Body()] = None,
 ) -> WorldDayResult:
     """Закрыть день рынка с опциональной защитой от повторного запуска."""
-    result = _close_global_day(payload.closure_id if payload else None)
+    result = await _close_global_day(payload.closure_id if payload else None)
     await _save_state()
     return result
 
@@ -500,7 +512,7 @@ async def simulate_day(company_id: str) -> DayResult:
     if not any(company.id == company_id for company in _state.companies):
         raise HTTPException(status_code=400, detail="Компания не найдена")
 
-    result = _close_global_day(None)
+    result = await _close_global_day(None)
     await _save_state()
     report = next(item for item in result.reports if item.company_id == company_id)
     return DayResult(
@@ -723,7 +735,7 @@ async def session_close_day(
 ) -> WorldDayResult:
     """Закрыть день в выбранной сессии и оповестить подключённых игроков."""
     session = _get_session_or_404(session_id)
-    result = _close_session_day(session, payload.closure_id if payload else None)
+    result = await _close_session_day(session, payload.closure_id if payload else None)
     session.readiness.reset()
     await _ws.broadcast(session_id, {
         "event": "day_closed",
@@ -808,7 +820,7 @@ async def session_set_decision(
     })
 
     if session.readiness.all_ready:
-        result = _close_session_day(session)
+        result = await _close_session_day(session)
         session.readiness.reset()
         await _ws.broadcast(session_id, {
             "event": "day_closed",

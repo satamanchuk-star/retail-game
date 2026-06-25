@@ -52,11 +52,12 @@
 - **Код-ревью + фиксы (после итерации 11):** устранены 4 регрессии 500→409/404 (введение `GameOverError` ловилось не во всех вызовах `close_day`): `_close_global_day` для `/close-day` и `/simulate-day`, 409 в `/demo/run`, все сессионные эндпоинты через `_get_session_or_404`. DRY: `_build_game_status(state, engine)`.
 - **Заморозка банкрота (находка #5):** при статусе `BANKRUPT` компания исключена из применения кэша (инвариант — кэш зафиксирован, воскрешение невозможно), NPC-апгрейдов, розницы (+ выпадает из знаменателя конкуренции), производства, NPC-рынка и финучёта. 3 теста в test_bankruptcy_freeze.py.
 - **Сессии в зале славы:** `LeaderboardEntry.source` различает источник; `_record_game_result(state, engine, source)` + `_close_session_day(session)` фиксируют и мультиплеер-партии. 3 теста в test_session_leaderboard.py.
-- **Персист зала славы:** `LeaderboardStore` (JSON-файл, атомарная запись) + настройка `PROFIT_CHAIN_LEADERBOARD_FILE`. Загрузка при старте, сохранение после каждой записи. Без пути — in-memory как раньше. 4 теста в test_leaderboard_persistence.py.
+- **Персист зала славы (JSON):** `LeaderboardStore` (JSON-файл, атомарная запись) + настройка `PROFIT_CHAIN_LEADERBOARD_FILE`. Загрузка при старте, сохранение после каждой записи. Без пути — in-memory как раньше. 4 теста в test_leaderboard_persistence.py.
+- **Персист зала славы (DB):** ORM-таблица `leaderboard_snapshots` (один JSON-blob) + миграция `0003`. `DatabaseSnapshotStore.load_leaderboard/save_leaderboard`. В DB-режиме `initialize_storage` грузит зал славы из БД, запись пишется в БД (`_persist_leaderboard`). Хелперы закрытия дня стали async. 4 теста в test_leaderboard_db_persistence.py. Приоритет хранилища: БД → JSON-файл → in-memory.
 
 ## Ближайший фокус
 
-**Играбельная альфа:** доиграть мультиплеер (WS-синхронизация есть) + персист зала славы в DB-режиме (сейчас только JSON-файл) + UI создания/выбора сессий.
+**Играбельная альфа:** доиграть мультиплеер (WS-синхронизация есть) + UI создания/выбора сессий + экран лобби.
 
 ## Что осталось до играбельной альфы
 

@@ -1,14 +1,22 @@
 """DB-снимок нужен как безопасный следующий шаг от JSON к постоянному миру."""
 
+from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.engine import build_initial_state
-from app.domain.models import GameState
-from app.services.orm import Base, GameSessionRow, GameSnapshotRow
+from app.domain.models import GameState, LeaderboardEntry
+from app.services.orm import (
+    Base,
+    GameSessionRow,
+    GameSnapshotRow,
+    LeaderboardSnapshotRow,
+)
 
 SNAPSHOT_KEY = "default_world"
+LEADERBOARD_KEY = "default_leaderboard"
+_LEADERBOARD_ADAPTER = TypeAdapter(list[LeaderboardEntry])
 
 
 class DatabaseSnapshotStore:
@@ -135,3 +143,30 @@ class DatabaseSnapshotStore:
             if row is not None:
                 await db_session.delete(row)
                 await db_session.commit()
+
+    # ── Зал славы ─────────────────────────────────────────────────────────────
+
+    async def load_leaderboard(self) -> list[LeaderboardEntry]:
+        """Загрузить зал славы из БД (пусто, если ещё не сохранялся)."""
+        if self.engine is None:
+            return []
+        async with self._session() as db_session:
+            row = await db_session.get(LeaderboardSnapshotRow, LEADERBOARD_KEY)
+            if row is None:
+                return []
+            return _LEADERBOARD_ADAPTER.validate_json(row.payload)
+
+    async def save_leaderboard(self, entries: list[LeaderboardEntry]) -> None:
+        """Сохранить весь зал славы одной строкой-снимком."""
+        if self.engine is None:
+            return
+        payload = _LEADERBOARD_ADAPTER.dump_json(entries).decode("utf-8")
+        async with self._session() as db_session:
+            row = await db_session.get(LeaderboardSnapshotRow, LEADERBOARD_KEY)
+            if row is None:
+                db_session.add(
+                    LeaderboardSnapshotRow(snapshot_key=LEADERBOARD_KEY, payload=payload)
+                )
+            else:
+                row.payload = payload
+            await db_session.commit()
