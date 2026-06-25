@@ -1,9 +1,16 @@
-"""Совместимость старого API симуляции с новым движком закрытия рынка."""
+"""Симуляция дня (legacy) + харнесс баланса для измерения здоровья экономики.
 
+Харнесс прогоняет мир на N дней без игрока (только NPC) и считает метрики:
+инфляция цен, банкротства, концентрация рынка (HHI), оборот. Это объективный
+«тест на баланс» для калибровки экономических изменений (см. docs/ROADMAP.md).
+"""
+
+import random
 from copy import deepcopy
 
-from app.domain.engine import GameEngine
-from app.domain.models import DayResult, GameState, Role
+from app.domain.engine import GameEngine, build_initial_state
+from app.domain.models import CompanyStatus, DayResult, GameState, Role
+from pydantic import BaseModel, Field
 
 
 def simulate_retail_day(state: GameState, company_id: str) -> DayResult:
@@ -30,3 +37,92 @@ def simulate_retail_day(state: GameState, company_id: str) -> DayResult:
         sold_units=report.sold_units,
         news=result.news,
     )
+
+
+class BalanceReport(BaseModel):
+    """Срез здоровья экономики после прогона мира на N дней (без игрока)."""
+
+    days: int
+    companies: int
+    bankruptcies: int
+    game_over: bool
+    winner_name: str | None
+    leader_cash_rub: int
+    min_cash_rub: int
+    cash_hhi: float = Field(description="Концентрация капитала, 0..10000 (выше = монополия)")
+    total_units_sold: int
+    price_inflation_pct: float = Field(description="Рост среднего чека с начала прогона, %")
+    producible_products: int = Field(description="Товаров с рецептом (глубина цепочки)")
+    catalog_products: int
+
+    def summary(self) -> str:
+        flags = []
+        if self.bankruptcies:
+            flags.append(f"банкротств {self.bankruptcies}")
+        if self.cash_hhi > 5000:
+            flags.append("монополизация")
+        if abs(self.price_inflation_pct) > 50:
+            flags.append("ценовой разнос")
+        if self.producible_products * 2 < self.catalog_products:
+            flags.append("полая цепочка")
+        health = "⚠️ " + ", ".join(flags) if flags else "✅ в норме"
+        return (
+            f"{self.days} дн · компаний {self.companies} · {health}\n"
+            f"  лидер {self.leader_cash_rub:,} ₽ · аутсайдер {self.min_cash_rub:,} ₽ · "
+            f"HHI {self.cash_hhi:.0f}\n"
+            f"  продано {self.total_units_sold:,} ед · инфляция чека {self.price_inflation_pct:+.1f}% · "
+            f"цепочка {self.producible_products}/{self.catalog_products} товаров"
+        )
+
+
+def _avg_price_on_day(state: GameState, day: int) -> float:
+    points = [p.avg_price_rub for p in state.price_history if p.day == day]
+    return sum(points) / len(points) if points else 0.0
+
+
+def run_balance_simulation(days: int = 30, seed: int | None = 42) -> BalanceReport:
+    """Прогнать мир на N дней (только NPC) и вернуть метрики здоровья экономики."""
+    if seed is not None:
+        random.seed(seed)
+    engine = GameEngine(build_initial_state())
+    for _ in range(days):
+        if engine.state.game_over:
+            break
+        engine.close_day()
+
+    state = engine.state
+    cashes = [c.cash_rub for c in state.companies]
+    positive = [c for c in cashes if c > 0]
+    total_positive = sum(positive) or 1
+    cash_hhi = sum((c / total_positive) ** 2 for c in positive) * 10_000
+
+    days_with_prices = sorted({p.day for p in state.price_history})
+    first_day = days_with_prices[0] if days_with_prices else 0
+    last_day = days_with_prices[-1] if days_with_prices else 0
+    start_price = _avg_price_on_day(state, first_day)
+    end_price = _avg_price_on_day(state, last_day)
+    inflation = ((end_price - start_price) / start_price * 100) if start_price else 0.0
+
+    winner = next((c for c in state.companies if c.id == state.winner_company_id), None)
+
+    return BalanceReport(
+        days=state.day,
+        companies=len(state.companies),
+        bankruptcies=sum(1 for c in state.companies if c.status == CompanyStatus.BANKRUPT),
+        game_over=state.game_over,
+        winner_name=winner.name if winner else None,
+        leader_cash_rub=max(cashes) if cashes else 0,
+        min_cash_rub=min(cashes) if cashes else 0,
+        cash_hhi=cash_hhi,
+        total_units_sold=sum(p.total_units_sold for p in state.price_history),
+        price_inflation_pct=inflation,
+        producible_products=len({r.product_id for r in state.production_recipes}),
+        catalog_products=len(state.products),
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import sys
+
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+    print(run_balance_simulation(days=n).summary())
