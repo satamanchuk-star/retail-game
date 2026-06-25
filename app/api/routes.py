@@ -1,5 +1,6 @@
 """HTTP API отделяет интерфейс от симуляции и готовит основу для мультиплеера."""
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from app.api.ws_manager import ConnectionManager
@@ -30,6 +31,7 @@ from app.domain.models import (
     FinancialReport,
     GameState,
     GameStatus,
+    LeaderboardEntry,
     Loan,
     LoanCreate,
     MarketEvent,
@@ -77,6 +79,30 @@ _state = _store.load_or_create()
 _engine = GameEngine(_state)
 _auth = AuthService(_state)
 _registry.init_default(_engine)
+
+# Рейтинг лидеров живёт вне игрового состояния и переживает сброс/новую партию.
+_leaderboard: list[LeaderboardEntry] = []
+
+
+def _record_finished_game() -> None:
+    """Сохранить результат основной партии в рейтинг лидеров (один раз)."""
+    if not _state.game_over:
+        return
+    standings = _engine.compute_standings()
+    winner = next((s for s in standings if s.is_winner), standings[0] if standings else None)
+    _leaderboard.insert(
+        0,
+        LeaderboardEntry(
+            game_no=len(_leaderboard) + 1,
+            recorded_at=datetime.now(tz=UTC).isoformat(timespec="seconds"),
+            days_played=_state.day,
+            winner_company_id=winner.company_id if winner else None,
+            winner_name=winner.name if winner else None,
+            winner_role=winner.role if winner else None,
+            winner_cash_rub=winner.cash_rub if winner else 0,
+            total_companies=len(_state.companies),
+        ),
+    )
 
 
 async def initialize_storage() -> None:
@@ -407,10 +433,13 @@ async def close_day(
     payload: Annotated[DayClosureRequest | None, Body()] = None,
 ) -> WorldDayResult:
     """Закрыть день рынка с опциональной защитой от повторного запуска."""
+    was_over = _state.game_over
     try:
         result = _engine.close_day(payload.closure_id if payload else None)
     except GameOverError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if _state.game_over and not was_over:
+        _record_finished_game()
     await _save_state()
     return result
 
@@ -569,6 +598,12 @@ async def get_game_status() -> GameStatus:
         season_name=season_names.get(_state.season, "Весна"),
         final_standings=_engine.compute_standings() if _state.game_over else [],
     )
+
+
+@router.get("/leaderboard", response_model=list[LeaderboardEntry])
+async def get_leaderboard() -> list[LeaderboardEntry]:
+    """Рейтинг лидеров: результаты завершённых партий (новые сверху)."""
+    return _leaderboard
 
 
 @router.get("/ratings", response_model=RatingBoard)

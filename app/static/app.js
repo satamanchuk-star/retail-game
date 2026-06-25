@@ -70,6 +70,7 @@ const authStatusRoot = document.querySelector('#auth-status');
 const logoutButton = document.querySelector('#logout');
 const seasonIndicator = document.querySelector('#season-indicator');
 const gameBanner = document.querySelector('#game-banner');
+const leaderboardRoot = document.querySelector('#leaderboard');
 let accessToken = localStorage.getItem('profitChainAccessToken');
 let currentUser = JSON.parse(localStorage.getItem('profitChainUser') || 'null');
 
@@ -104,6 +105,10 @@ async function fetchDatabaseStatus() {
 
 async function fetchGameStatus() {
   return api('/api/game-status');
+}
+
+async function fetchLeaderboard() {
+  return api('/api/leaderboard');
 }
 
 async function fetchProjectStatus() {
@@ -252,6 +257,19 @@ function renderGameStatus(status) {
     gameBanner.hidden = true;
     gameBanner.innerHTML = '';
   }
+}
+
+function renderLeaderboard(entries) {
+  if (!leaderboardRoot) return;
+  if (!entries || !entries.length) {
+    leaderboardRoot.innerHTML = '<p class="muted">Пока нет завершённых партий. Доведите игру до победы или последнего выжившего.</p>';
+    return;
+  }
+  leaderboardRoot.innerHTML = entries.map((e) => {
+    const who = e.winner_name ? `${e.winner_name}${e.winner_role ? ` · ${roleLabel(e.winner_role)}` : ''}` : 'Без победителя';
+    const when = (e.recorded_at || '').replace('T', ' ');
+    return `<div class="leader"><b>🏅 Партия #${e.game_no}</b><span>${who}</span><small>Капитал ${formatRub.format(e.winner_cash_rub)} · ${e.days_played} дн. · ${e.total_companies} компаний · ${when}</small></div>`;
+  }).join('');
 }
 
 function renderStandingsTable(standings) {
@@ -545,7 +563,7 @@ function renderDeliveryOrders(orders, state) {
 }
 
 async function render() {
-  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory, gameStatus] = await Promise.all([
+  const [state, ratings, persistenceStatus, databaseStatus, projectStatus, dayClosures, finances, storeFormats, facilityFormats, marketEvents, priceHistory, gameStatus, leaderboard] = await Promise.all([
     fetchState(),
     fetchRatings(),
     fetchPersistenceStatus(),
@@ -558,6 +576,7 @@ async function render() {
     api('/api/market-events'),
     api('/api/prices'),
     fetchGameStatus(),
+    fetchLeaderboard(),
   ]);
   lastState = state;
   lastMarketEvents = marketEvents;
@@ -574,6 +593,7 @@ async function render() {
   renderRawMaterials(state);
   renderCompanies(state);
   renderGameStatus(gameStatus);
+  renderLeaderboard(leaderboard);
   renderContracts(state);
   renderBanks(state);
   renderLoans(state);

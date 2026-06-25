@@ -124,6 +124,17 @@ button {
 .standings th { color: var(--muted); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
 .standings td:last-child, .standings th:last-child { text-align: right; }
 .standings tr.winner { background: rgba(13, 159, 110, 0.1); font-weight: 700; }
+.leaderboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.leader {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fffdf3, #fff);
+}
+.leader small { color: var(--muted); }
+.leader span { font-weight: 600; }
 button.secondary { background: #0d9f6e; box-shadow: 0 16px 35px rgba(13, 159, 110, 0.22); }
 button.ghost { color: var(--ink); background: #edf2ff; box-shadow: none; }
 .chart {

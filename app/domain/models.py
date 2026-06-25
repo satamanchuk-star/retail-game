@@ -657,6 +657,19 @@ class FinalStanding(BaseModel):
     is_winner: bool = False
 
 
+class LeaderboardEntry(BaseModel):
+    """Результат завершённой партии для рейтинга лидеров между играми."""
+
+    game_no: int = Field(ge=1)
+    recorded_at: str  # ISO-время завершения партии
+    days_played: int = Field(ge=0)
+    winner_company_id: str | None
+    winner_name: str | None
+    winner_role: Role | None
+    winner_cash_rub: int
+    total_companies: int = Field(ge=0)
+
+
 class GameStatus(BaseModel):
     """Публичный статус текущей партии."""
 
