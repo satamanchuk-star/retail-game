@@ -661,6 +661,7 @@ class LeaderboardEntry(BaseModel):
     """Результат завершённой партии для рейтинга лидеров между играми."""
 
     game_no: int = Field(ge=1)
+    source: str = "Основная партия"  # основная партия или название сессии
     recorded_at: str  # ISO-время завершения партии
     days_played: int = Field(ge=0)
     winner_company_id: str | None

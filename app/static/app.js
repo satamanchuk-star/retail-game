@@ -268,7 +268,8 @@ function renderLeaderboard(entries) {
   leaderboardRoot.innerHTML = entries.map((e) => {
     const who = e.winner_name ? `${e.winner_name}${e.winner_role ? ` · ${roleLabel(e.winner_role)}` : ''}` : 'Без победителя';
     const when = (e.recorded_at || '').replace('T', ' ');
-    return `<div class="leader"><b>🏅 Партия #${e.game_no}</b><span>${who}</span><small>Капитал ${formatRub.format(e.winner_cash_rub)} · ${e.days_played} дн. · ${e.total_companies} компаний · ${when}</small></div>`;
+    const source = e.source ? ` · ${e.source}` : '';
+    return `<div class="leader"><b>🏅 Партия #${e.game_no}</b><span>${who}</span><small>Капитал ${formatRub.format(e.winner_cash_rub)} · ${e.days_played} дн. · ${e.total_companies} компаний${source} · ${when}</small></div>`;
   }).join('');
 }
 

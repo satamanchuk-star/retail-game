@@ -85,23 +85,26 @@ _registry.init_default(_engine)
 _leaderboard: list[LeaderboardEntry] = []
 
 
-def _record_finished_game() -> None:
-    """Сохранить результат основной партии в рейтинг лидеров (один раз)."""
-    if not _state.game_over:
+def _record_game_result(
+    state: GameState, engine: GameEngine, source: str = "Основная партия"
+) -> None:
+    """Сохранить результат завершённой партии в рейтинг лидеров (один раз)."""
+    if not state.game_over:
         return
-    standings = _engine.compute_standings()
+    standings = engine.compute_standings()
     winner = next((s for s in standings if s.is_winner), standings[0] if standings else None)
     _leaderboard.insert(
         0,
         LeaderboardEntry(
             game_no=len(_leaderboard) + 1,
+            source=source,
             recorded_at=datetime.now(tz=UTC).isoformat(timespec="seconds"),
-            days_played=_state.day,
+            days_played=state.day,
             winner_company_id=winner.company_id if winner else None,
             winner_name=winner.name if winner else None,
             winner_role=winner.role if winner else None,
             winner_cash_rub=winner.cash_rub if winner else 0,
-            total_companies=len(_state.companies),
+            total_companies=len(state.companies),
         ),
     )
 
@@ -114,7 +117,19 @@ def _close_global_day(closure_id: str | None) -> WorldDayResult:
     except GameOverError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if _state.game_over and not was_over:
-        _record_finished_game()
+        _record_game_result(_state, _engine)
+    return result
+
+
+def _close_session_day(session: GameSession, closure_id: str | None = None) -> WorldDayResult:
+    """Закрыть день сессии: 409 на завершённой игре + запись результата в зал славы."""
+    was_over = session.state.game_over
+    try:
+        result = session.engine.close_day(closure_id)
+    except GameOverError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if session.state.game_over and not was_over:
+        _record_game_result(session.state, session.engine, source=session.name)
     return result
 
 
@@ -704,10 +719,7 @@ async def session_close_day(
 ) -> WorldDayResult:
     """Закрыть день в выбранной сессии и оповестить подключённых игроков."""
     session = _get_session_or_404(session_id)
-    try:
-        result = session.engine.close_day(payload.closure_id if payload else None)
-    except GameOverError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    result = _close_session_day(session, payload.closure_id if payload else None)
     session.readiness.reset()
     await _ws.broadcast(session_id, {
         "event": "day_closed",
@@ -792,10 +804,7 @@ async def session_set_decision(
     })
 
     if session.readiness.all_ready:
-        try:
-            result = session.engine.close_day()
-        except GameOverError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        result = _close_session_day(session)
         session.readiness.reset()
         await _ws.broadcast(session_id, {
             "event": "day_closed",
