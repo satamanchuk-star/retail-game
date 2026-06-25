@@ -1885,4 +1885,10 @@ class GameEngine:
             "grain": 4_000.0,
             "raw_milk": 3_000.0,
             "packaging": 800.0,
+            "raw_meat": 1_000.0,
+            "raw_poultry": 1_200.0,
+            "fruit_concentrate": 1_000.0,
+            "cocoa": 600.0,
+            "sugar_raw": 1_800.0,
+            "oilseed": 1_200.0,
         }

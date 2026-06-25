@@ -412,6 +412,21 @@ RAW_MATERIALS: list[RawMaterial] = [
         id="raw_milk", name="Молоко-сырьё", storage="холодильник", base_price_rub=42
     ),
     RawMaterial(id="packaging", name="Упаковка", storage="обычное", base_price_rub=6),
+    RawMaterial(
+        id="raw_meat", name="Мясо-сырьё", storage="холодильник", base_price_rub=130
+    ),
+    RawMaterial(
+        id="raw_poultry", name="Птица-сырьё", storage="холодильник", base_price_rub=75
+    ),
+    RawMaterial(
+        id="fruit_concentrate", name="Фруктовый концентрат", storage="сухое",
+        base_price_rub=28,
+    ),
+    RawMaterial(id="cocoa", name="Какао-бобы", storage="сухое", base_price_rub=95),
+    RawMaterial(id="sugar_raw", name="Сахар-сырец", storage="сухое", base_price_rub=22),
+    RawMaterial(
+        id="oilseed", name="Масличные культуры", storage="сухое", base_price_rub=20
+    ),
 ]
 
 PRODUCTION_RECIPES: list[ProductionRecipe] = [
@@ -438,6 +453,108 @@ PRODUCTION_RECIPES: list[ProductionRecipe] = [
             RecipeInput(raw_material_id="packaging", quantity_per_unit=0.10),
         ],
         conversion_cost_rub=12,
+    ),
+    # ── Молочная ветка ────────────────────────────────────────────────────────
+    ProductionRecipe(
+        product_id="cheese",  # сыр требует много молока-сырья
+        inputs=[
+            RecipeInput(raw_material_id="raw_milk", quantity_per_unit=8.0),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.05),
+        ],
+        conversion_cost_rub=40,
+    ),
+    # ── Зерновая ветка ────────────────────────────────────────────────────────
+    ProductionRecipe(
+        product_id="flour",
+        inputs=[
+            RecipeInput(raw_material_id="grain", quantity_per_unit=1.1),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.04),
+        ],
+        conversion_cost_rub=6,
+    ),
+    ProductionRecipe(
+        product_id="pasta",
+        inputs=[
+            RecipeInput(raw_material_id="grain", quantity_per_unit=0.9),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.06),
+        ],
+        conversion_cost_rub=14,
+    ),
+    ProductionRecipe(
+        product_id="snacks",
+        inputs=[
+            RecipeInput(raw_material_id="grain", quantity_per_unit=0.5),
+            RecipeInput(raw_material_id="oilseed", quantity_per_unit=0.1),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.08),
+        ],
+        conversion_cost_rub=18,
+    ),
+    # ── Мясная ветка ──────────────────────────────────────────────────────────
+    ProductionRecipe(
+        product_id="meat",
+        inputs=[
+            RecipeInput(raw_material_id="raw_meat", quantity_per_unit=1.1),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.05),
+        ],
+        conversion_cost_rub=30,
+    ),
+    ProductionRecipe(
+        product_id="sausage",
+        inputs=[
+            RecipeInput(raw_material_id="raw_meat", quantity_per_unit=0.6),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.10),
+        ],
+        conversion_cost_rub=25,
+    ),
+    ProductionRecipe(
+        product_id="chicken",
+        inputs=[
+            RecipeInput(raw_material_id="raw_poultry", quantity_per_unit=1.05),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.05),
+        ],
+        conversion_cost_rub=18,
+    ),
+    # ── Напитки и бакалея ─────────────────────────────────────────────────────
+    ProductionRecipe(
+        product_id="juice",
+        inputs=[
+            RecipeInput(raw_material_id="fruit_concentrate", quantity_per_unit=0.5),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.12),
+        ],
+        conversion_cost_rub=14,
+    ),
+    ProductionRecipe(
+        product_id="soda",
+        inputs=[
+            RecipeInput(raw_material_id="sugar_raw", quantity_per_unit=0.2),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.12),
+        ],
+        conversion_cost_rub=10,
+    ),
+    ProductionRecipe(
+        product_id="sugar",
+        inputs=[
+            RecipeInput(raw_material_id="sugar_raw", quantity_per_unit=1.2),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.05),
+        ],
+        conversion_cost_rub=8,
+    ),
+    ProductionRecipe(
+        product_id="oil",
+        inputs=[
+            RecipeInput(raw_material_id="oilseed", quantity_per_unit=1.3),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.08),
+        ],
+        conversion_cost_rub=16,
+    ),
+    ProductionRecipe(
+        product_id="chocolate",
+        inputs=[
+            RecipeInput(raw_material_id="cocoa", quantity_per_unit=0.4),
+            RecipeInput(raw_material_id="sugar_raw", quantity_per_unit=0.3),
+            RecipeInput(raw_material_id="packaging", quantity_per_unit=0.06),
+        ],
+        conversion_cost_rub=20,
     ),
 ]
 
@@ -611,11 +728,23 @@ INITIAL_RAW_INVENTORIES: dict[str, dict[str, float]] = {
         "grain": 6_000.0,
         "raw_milk": 5_400.0,
         "packaging": 1_200.0,
+        "raw_meat": 1_500.0,
+        "raw_poultry": 1_800.0,
+        "fruit_concentrate": 1_400.0,
+        "cocoa": 900.0,
+        "sugar_raw": 2_500.0,
+        "oilseed": 1_600.0,
     },
     "npc_producer_prem": {
         "grain": 4_500.0,
         "raw_milk": 4_000.0,
         "packaging": 900.0,
+        "raw_meat": 1_200.0,
+        "raw_poultry": 1_200.0,
+        "fruit_concentrate": 1_000.0,
+        "cocoa": 700.0,
+        "sugar_raw": 1_800.0,
+        "oilseed": 1_200.0,
     },
 }
 
