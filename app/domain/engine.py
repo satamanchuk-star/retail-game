@@ -930,11 +930,9 @@ class GameEngine:
             out_mult = self._factory_output_multiplier(company.id)
             capacity = self._daily_capacity(company.id, AssetType.FACTORY, 0)
             if company.is_npc:
-                recipes = self.state.production_recipes
-                per_recipe = max(1, int(capacity * 0.9 / len(recipes))) if recipes else 0
-                for recipe in recipes:
+                for recipe, units in self._npc_production_plan(company):
                     self._run_recipe(
-                        company, recipe, per_recipe, raw_inventory,
+                        company, recipe, units, raw_inventory,
                         raw_by_id, reports, operations, out_mult,
                     )
             else:
@@ -1070,20 +1068,60 @@ class GameEngine:
                 )
             )
 
-    def _npc_restock_raw_materials(self, company: Company) -> None:
-        """NPC докупает сырьё если запас падает ниже 14 дней производства."""
+    def _npc_production_plan(self, company: Company) -> list[tuple[ProductionRecipe, int]]:
+        """Умный план выпуска NPC: мощность распределяется по привлекательности.
+
+        Привлекательность = маржа × спрос (с сезоном), с уклоном по стратегии. Половина
+        мощности делится по привлекательности, половина — поровну (диверсификация).
+        Так бот «строит цепочку» осмысленно: льёт мощность в маржинальное и ходовое.
+        """
+        recipes = self.state.production_recipes
         capacity = self._daily_capacity(company.id, AssetType.FACTORY, 0)
-        production_rate = int(capacity * 0.9 / max(len(self.state.production_recipes), 1))
-        if not production_rate:
+        budget = int(capacity * 0.9)
+        if not recipes or budget <= 0:
+            return []
+
+        product_by_id = {p.id: p for p in self.state.products}
+        raw_by_id = {m.id: m for m in self.state.raw_materials}
+        season = SEASONAL_DEMAND.get(self.state.season, {})
+
+        scores: list[float] = []
+        for recipe in recipes:
+            product = product_by_id.get(recipe.product_id)
+            if product is None:
+                scores.append(0.0)
+                continue
+            margin = max(1.0, product.base_price_rub - self._recipe_unit_cost(recipe, raw_by_id))
+            demand = product.base_daily_demand * season.get(recipe.product_id, 1.0)
+            score = margin * demand
+            if company.npc_strategy == NpcStrategy.PREMIUM:
+                score *= max(0.3, product.base_price_rub / 150.0)  # уклон в дорогое
+            elif company.npc_strategy == NpcStrategy.AGGRESSIVE:
+                score *= max(0.3, demand / 350.0)  # уклон в объём
+            scores.append(score)
+
+        score_total = sum(scores) or 1.0
+        even = budget / len(recipes)
+        plan: list[tuple[ProductionRecipe, int]] = []
+        for recipe, score in zip(recipes, scores, strict=True):
+            units = int(0.5 * even + 0.5 * budget * score / score_total)
+            if units > 0:
+                plan.append((recipe, units))
+        return plan
+
+    def _npc_restock_raw_materials(self, company: Company) -> None:
+        """NPC докупает сырьё под план выпуска, если запас < 14 дней производства."""
+        plan = self._npc_production_plan(company)
+        if not plan:
             return
         raw_inventory = self.state.raw_inventories.setdefault(company.id, {})
         raw_by_id = {m.id: m for m in self.state.raw_materials}
         daily_use: dict[str, float] = {}
-        for recipe in self.state.production_recipes:
+        for recipe, units in plan:
             for item in recipe.inputs:
                 daily_use[item.raw_material_id] = (
                     daily_use.get(item.raw_material_id, 0.0)
-                    + item.quantity_per_unit * production_rate
+                    + item.quantity_per_unit * units
                 )
         for raw_id, use_per_day in daily_use.items():
             current = raw_inventory.get(raw_id, 0.0)
