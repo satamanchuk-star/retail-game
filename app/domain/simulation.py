@@ -75,9 +75,22 @@ class BalanceReport(BaseModel):
         )
 
 
-def _avg_price_on_day(state: GameState, day: int) -> float:
-    points = [p.avg_price_rub for p in state.price_history if p.day == day]
-    return sum(points) / len(points) if points else 0.0
+# Фиксированная staple-корзина: меряем инфляцию по одним и тем же товарам, чтобы
+# расширение ассортимента в дорогие позиции не выдавалось за инфляцию.
+_STAPLE_BASKET = ("bread", "milk")
+
+
+def _basket_price_on_day(state: GameState, day: int) -> float:
+    """Цена staple-корзины за день, взвешенная по проданным единицам."""
+    points = [
+        p
+        for p in state.price_history
+        if p.day == day and p.product_id in _STAPLE_BASKET
+    ]
+    units = sum(p.total_units_sold for p in points)
+    if not units:
+        return 0.0
+    return sum(p.avg_price_rub * p.total_units_sold for p in points) / units
 
 
 def run_balance_simulation(days: int = 30, seed: int | None = 42) -> BalanceReport:
@@ -96,11 +109,13 @@ def run_balance_simulation(days: int = 30, seed: int | None = 42) -> BalanceRepo
     total_positive = sum(positive) or 1
     cash_hhi = sum((c / total_positive) ** 2 for c in positive) * 10_000
 
-    days_with_prices = sorted({p.day for p in state.price_history})
-    first_day = days_with_prices[0] if days_with_prices else 0
-    last_day = days_with_prices[-1] if days_with_prices else 0
-    start_price = _avg_price_on_day(state, first_day)
-    end_price = _avg_price_on_day(state, last_day)
+    basket_days = sorted(
+        {p.day for p in state.price_history if p.product_id in _STAPLE_BASKET}
+    )
+    first_day = basket_days[0] if basket_days else 0
+    last_day = basket_days[-1] if basket_days else 0
+    start_price = _basket_price_on_day(state, first_day)
+    end_price = _basket_price_on_day(state, last_day)
     inflation = ((end_price - start_price) / start_price * 100) if start_price else 0.0
 
     winner = next((c for c in state.companies if c.id == state.winner_company_id), None)

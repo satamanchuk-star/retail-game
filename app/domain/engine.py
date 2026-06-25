@@ -515,6 +515,9 @@ class GameEngine:
     WIN_CASH_THRESHOLD = 100_000_000
     # Эластичность спроса по цене: дешевле рынка → пул растёт, дороже → сжимается.
     BASE_PRICE_ELASTICITY = 0.9
+    # Расширение ассортимента NPC-ритейлера: только если здоров, и постепенно.
+    DIVERSIFY_CASH_FLOOR = 4_000_000
+    MAX_NEW_LINES_PER_DAY = 2
 
     def _check_bankruptcy_and_victory(
         self,
@@ -1224,14 +1227,43 @@ class GameEngine:
             inventory = self.state.inventories.get(company.id, {})
             cash_budget = int(company.cash_rub * 0.30)
 
-            for product_id, current in list(inventory.items()):
+            # Диверсифицируют ассортимент только финансово здоровые ритейлеры —
+            # это не даёт слабым компаниям перетариться дорогими новинками и разориться.
+            can_diversify = company.cash_rub >= self.DIVERSIFY_CASH_FLOOR
+            available_pids = {
+                lst.product_id
+                for lst in self.state.market_listings
+                if lst.is_active
+                and lst.seller_id != company.id
+                and lst.quantity_available > 0
+            }
+            # Сначала пополняем то, что уже на полке; затем (если здоров) — новинки
+            # по привлекательности (цена × спрос).
+            existing = list(inventory.keys())
+            new_lines = sorted(
+                (available_pids - set(inventory)) if can_diversify else set(),
+                key=lambda pid: (
+                    product_by_id[pid].base_price_rub * product_by_id[pid].base_daily_demand
+                    if pid in product_by_id else 0
+                ),
+                reverse=True,
+            )
+            new_lines_added = 0
+
+            for product_id in [*existing, *new_lines]:
                 product = product_by_id.get(product_id)
                 if product is None:
                     continue
-                threshold = product.base_daily_demand * 5
+                current = inventory.get(product_id, 0)
+                is_new_line = current <= 0
+                if is_new_line and new_lines_added >= self.MAX_NEW_LINES_PER_DAY:
+                    continue
+                # Новинку заводим скромным объёмом (не вычищаем рынок за день)
+                threshold = product.base_daily_demand * (2 if is_new_line else 5)
                 if current >= threshold:
                     continue
                 needed = threshold - current
+                needed_before = needed
 
                 listings = sorted(
                     [
@@ -1270,6 +1302,8 @@ class GameEngine:
                         )
                     except ValueError:
                         continue
+                if is_new_line and needed < needed_before:
+                    new_lines_added += 1
 
     def _apply_npc_decisions(self) -> None:
         """Сформировать решения на день для всех NPC-компаний."""
