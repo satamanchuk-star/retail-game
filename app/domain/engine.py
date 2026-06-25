@@ -475,11 +475,14 @@ class GameEngine:
         self._apply_financial_accounting(reports_by_company, operations)
 
         for company in self.state.companies:
+            # Банкрот заморожен: кэш не меняется (инвариант — не воскресает)
+            if company.status == CompanyStatus.BANKRUPT:
+                continue
             report = reports_by_company[company.id]
             company.cash_rub += report.profit_rub
 
         for company in self.state.companies:
-            if company.is_npc:
+            if company.is_npc and company.status == CompanyStatus.ACTIVE:
                 upgrade_news = self._npc_try_upgrade(company, reports_by_company)
                 if upgrade_news:
                     news.insert(0, upgrade_news)
@@ -917,7 +920,7 @@ class GameEngine:
     ) -> None:
         raw_by_id = {material.id: material for material in self.state.raw_materials}
         for company in self.state.companies:
-            if company.role != Role.PRODUCER:
+            if company.role != Role.PRODUCER or company.status == CompanyStatus.BANKRUPT:
                 continue
             raw_inventory = self.state.raw_inventories.setdefault(
                 company.id, self._starting_raw_inventory()
@@ -1122,7 +1125,11 @@ class GameEngine:
         """NPC-производители выставляют излишки производства на рынок."""
         product_by_id = {p.id: p for p in self.state.products}
         for company in self.state.companies:
-            if not company.is_npc or company.role != Role.PRODUCER:
+            if (
+                not company.is_npc
+                or company.role != Role.PRODUCER
+                or company.status == CompanyStatus.BANKRUPT
+            ):
                 continue
             inventory = self.state.inventories.get(company.id, {})
             for product_id, available in inventory.items():
@@ -1168,7 +1175,11 @@ class GameEngine:
         """NPC-ритейлеры пополняют запасы с рынка, если цена приемлема."""
         product_by_id = {p.id: p for p in self.state.products}
         for company in self.state.companies:
-            if not company.is_npc or company.role != Role.RETAILER:
+            if (
+                not company.is_npc
+                or company.role != Role.RETAILER
+                or company.status == CompanyStatus.BANKRUPT
+            ):
                 continue
             inventory = self.state.inventories.get(company.id, {})
             cash_budget = int(company.cash_rub * 0.30)
@@ -1406,7 +1417,8 @@ class GameEngine:
         # Группируем ритейлеров по регионам
         by_region: dict[str, list[Company]] = {}
         for company in self.state.companies:
-            if company.role == Role.RETAILER:
+            # Банкрот выбыл с рынка: не продаёт и не входит в знаменатель конкуренции
+            if company.role == Role.RETAILER and company.status == CompanyStatus.ACTIVE:
                 by_region.setdefault(company.region_id, []).append(company)
 
         closing_day = self.state.day + 1
@@ -1540,6 +1552,8 @@ class GameEngine:
         """Начислить НДС, налог на прибыль и сохранить проводки дня."""
         posting_day = self.state.day + 1
         for company in self.state.companies:
+            if company.status == CompanyStatus.BANKRUPT:
+                continue
             report = reports[company.id]
             report.vat_output_rub = int(report.revenue_rub * VAT_RATE / (1 + VAT_RATE))
             report.vat_input_rub = int(report.costs_rub * VAT_RATE / (1 + VAT_RATE))
