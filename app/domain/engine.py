@@ -518,6 +518,8 @@ class GameEngine:
     # Расширение ассортимента NPC-ритейлера: только если здоров, и постепенно.
     DIVERSIFY_CASH_FLOOR = 4_000_000
     MAX_NEW_LINES_PER_DAY = 2
+    # Транзитные расходы дистрибьютора на единицу × риск маршрута (топливо/потери/страховка).
+    TRANSIT_RISK_COST_PER_UNIT = 45
 
     def _check_bankruptcy_and_victory(
         self,
@@ -1717,6 +1719,17 @@ class GameEngine:
             )
         )
 
+    def _route_risk(self, shipper_id: str, receiver_id: str) -> float:
+        """Риск маршрута = средний logistics_risk регионов отправителя и получателя."""
+        risk_by_region = {r.id: r.logistics_risk for r in self.state.regions}
+        company_by_id = {c.id: c for c in self.state.companies}
+        risks = [
+            risk_by_region.get(company_by_id[cid].region_id, 0.15)
+            for cid in (shipper_id, receiver_id)
+            if cid in company_by_id
+        ]
+        return sum(risks) / len(risks) if risks else 0.15
+
     def _apply_due_delivery_orders(
         self,
         reports: dict[str, CompanyDayReport],
@@ -1772,6 +1785,9 @@ class GameEngine:
             # Грузоотправитель платит за доставку
             reports[order.shipper_id].costs_rub += fee
             reports[order.shipper_id].profit_rub -= fee
+            # Транзитные расходы дистрибьютора по риску маршрута (отправитель ↔ получатель)
+            route_risk = self._route_risk(order.shipper_id, order.receiver_id)
+            transit_cost = int(transferred * route_risk * self.TRANSIT_RISK_COST_PER_UNIT)
             # Дистрибьютор получает вознаграждение (постоянные расходы — раз в день)
             warehouse_costs = self._fixed_costs(dist_id, AssetType.WAREHOUSE, 45_000)
             reports[dist_id].revenue_rub += fee
@@ -1780,15 +1796,19 @@ class GameEngine:
                 reports[dist_id].costs_rub += warehouse_costs
                 reports[dist_id].profit_rub -= warehouse_costs
                 charged_dist_ids.add(dist_id)
-            reports[dist_id].profit_rub += fee
+            reports[dist_id].costs_rub += transit_cost
+            reports[dist_id].profit_rub += fee - transit_cost
             order.status = DeliveryStatus.FULFILLED
             operations.append(
                 DayClosureOperation(
                     step="delivery_fulfilled",
                     company_id=dist_id,
-                    amount_rub=fee,
+                    amount_rub=fee - transit_cost,
                     quantity=transferred,
-                    message=f"Заявка {order.id}: доставлено {transferred} ед. товара {order.product_id}.",
+                    message=(
+                        f"Заявка {order.id}: доставлено {transferred} ед. {order.product_id}"
+                        f" (транзит по риску {route_risk:.2f}: −{transit_cost} ₽)."
+                    ),
                 )
             )
 
