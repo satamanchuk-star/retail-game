@@ -140,8 +140,17 @@ async def test_demo_run_returns_409_not_500_when_game_over() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_game_status_returns_404_not_500_for_missing_session() -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/sessions/no-such-session/game-status",
+        "/api/sessions/no-such-session/market-events",
+        "/api/sessions/no-such-session/prices",
+        "/api/sessions/no-such-session/delivery-orders",
+    ],
+)
+async def test_session_endpoints_return_404_not_500_for_missing_session(path: str) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/sessions/no-such-session/game-status")
+        resp = await client.get(path)
         assert resp.status_code == 404

@@ -16,6 +16,7 @@ from app.domain.models import (
     Company,
     CompanyCreate,
     CompanyDecision,
+    CompanyStatus,
     Contract,
     ContractCreate,
     DatabaseStatus,
@@ -115,6 +116,24 @@ def _close_global_day(closure_id: str | None) -> WorldDayResult:
     if _state.game_over and not was_over:
         _record_finished_game()
     return result
+
+
+_SEASON_NAMES = {1: "Весна", 2: "Лето", 3: "Осень", 4: "Зима"}
+
+
+def _build_game_status(state: GameState, engine: GameEngine) -> GameStatus:
+    """Собрать публичный статус партии из состояния и движка."""
+    winner = next((c for c in state.companies if c.id == state.winner_company_id), None)
+    bankrupt_ids = [c.id for c in state.companies if c.status == CompanyStatus.BANKRUPT]
+    return GameStatus(
+        game_over=state.game_over,
+        winner_company_id=state.winner_company_id,
+        winner_name=winner.name if winner else None,
+        bankrupt_companies=bankrupt_ids,
+        season=state.season,
+        season_name=_SEASON_NAMES.get(state.season, "Весна"),
+        final_standings=engine.compute_standings() if state.game_over else [],
+    )
 
 
 async def initialize_storage() -> None:
@@ -594,21 +613,7 @@ async def get_market_events() -> list[MarketEvent]:
 @router.get("/game-status", response_model=GameStatus)
 async def get_game_status() -> GameStatus:
     """Текущий статус игры: победитель, банкроты, сезон."""
-    season_names = {1: "Весна", 2: "Лето", 3: "Осень", 4: "Зима"}
-    company_by_id = {c.id: c for c in _state.companies}
-    winner = company_by_id.get(_state.winner_company_id or "")
-    bankrupt_ids = [
-        c.id for c in _state.companies if c.status and c.status.value == "bankrupt"
-    ]
-    return GameStatus(
-        game_over=_state.game_over,
-        winner_company_id=_state.winner_company_id,
-        winner_name=winner.name if winner else None,
-        bankrupt_companies=bankrupt_ids,
-        season=_state.season,
-        season_name=season_names.get(_state.season, "Весна"),
-        final_standings=_engine.compute_standings() if _state.game_over else [],
-    )
+    return _build_game_status(_state, _engine)
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
@@ -887,7 +892,7 @@ async def session_price_history(
     region_id: str | None = None,
 ) -> list[PricePoint]:
     """История средневзвешенных цен продажи. Фильтры: product_id, region_id."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     pts = session.state.price_history
     if product_id:
         pts = [p for p in pts if p.product_id == product_id]
@@ -899,7 +904,7 @@ async def session_price_history(
 @router.get("/sessions/{session_id}/market-events", response_model=list[MarketEvent])
 async def session_market_events(session_id: str) -> list[MarketEvent]:
     """Все рыночные события сессии (активные и истёкшие)."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     return session.state.market_events
 
 
@@ -907,22 +912,7 @@ async def session_market_events(session_id: str) -> list[MarketEvent]:
 async def session_game_status(session_id: str) -> GameStatus:
     """Текущий статус игровой сессии: победитель, банкроты, сезон."""
     session = _get_session_or_404(session_id)
-    state = session.state
-    season_names = {1: "Весна", 2: "Лето", 3: "Осень", 4: "Зима"}
-    company_by_id = {c.id: c for c in state.companies}
-    winner = company_by_id.get(state.winner_company_id or "")
-    bankrupt_ids = [
-        c.id for c in state.companies if c.status and c.status.value == "bankrupt"
-    ]
-    return GameStatus(
-        game_over=state.game_over,
-        winner_company_id=state.winner_company_id,
-        winner_name=winner.name if winner else None,
-        bankrupt_companies=bankrupt_ids,
-        season=state.season,
-        season_name=season_names.get(state.season, "Весна"),
-        final_standings=session.engine.compute_standings() if state.game_over else [],
-    )
+    return _build_game_status(session.state, session.engine)
 
 
 @router.get(
@@ -931,7 +921,7 @@ async def session_game_status(session_id: str) -> GameStatus:
 )
 async def session_list_delivery_orders(session_id: str) -> list[DeliveryOrder]:
     """Вернуть все заявки на доставку в сессии."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     return session.state.delivery_orders
 
 
@@ -947,7 +937,7 @@ async def session_create_delivery_order(
     user: Annotated[User, Depends(get_required_user)],
 ) -> DeliveryOrder:
     """Грузоотправитель создаёт заявку на доставку."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     _ensure_can_manage_company(company_id, user, session.state)
     try:
         return session.engine.create_delivery_order(company_id, payload)
@@ -966,7 +956,7 @@ async def session_accept_delivery_order(
     user: Annotated[User, Depends(get_required_user)],
 ) -> DeliveryOrder:
     """Дистрибьютор принимает pending-заявку на себя."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     _ensure_can_manage_company(distributor_company_id, user, session.state)
     try:
         return session.engine.accept_delivery_order(order_id, distributor_company_id)
@@ -985,7 +975,7 @@ async def session_cancel_delivery_order(
     user: Annotated[User, Depends(get_required_user)],
 ) -> DeliveryOrder:
     """Грузоотправитель отменяет ещё не исполненную заявку."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     _ensure_can_manage_company(shipper_company_id, user, session.state)
     try:
         return session.engine.cancel_delivery_order(order_id, shipper_company_id)
@@ -997,7 +987,7 @@ async def session_cancel_delivery_order(
 async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     """WebSocket: события сессии в реальном времени (day_closed, player_submitted)."""
     try:
-        session = _registry.get(session_id)
+        session = _get_session_or_404(session_id)
     except KeyError:
         await websocket.accept()
         await websocket.close(code=4004)
