@@ -59,6 +59,7 @@ from app.domain.project_status import build_project_status
 from app.domain.ratings import build_rating_board
 from app.domain.session_registry import GameSession, SessionRegistry
 from app.services.database_store import DatabaseSnapshotStore
+from app.services.leaderboard_store import LeaderboardStore
 from app.services.state_store import StateStore
 from fastapi import (
     APIRouter,
@@ -82,7 +83,9 @@ _auth = AuthService(_state)
 _registry.init_default(_engine)
 
 # Рейтинг лидеров живёт вне игрового состояния и переживает сброс/новую партию.
-_leaderboard: list[LeaderboardEntry] = []
+# Опционально персистится в отдельный JSON-файл (PROFIT_CHAIN_LEADERBOARD_FILE).
+_leaderboard_store = LeaderboardStore(settings.leaderboard_file_path)
+_leaderboard: list[LeaderboardEntry] = _leaderboard_store.load()
 
 
 def _record_game_result(
@@ -107,6 +110,7 @@ def _record_game_result(
             total_companies=len(state.companies),
         ),
     )
+    _leaderboard_store.save(_leaderboard)
 
 
 def _close_global_day(closure_id: str | None) -> WorldDayResult:

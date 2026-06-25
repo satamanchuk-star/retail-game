@@ -20,6 +20,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("PROFIT_CHAIN_DATABASE_URL", "DATABASE_URL"),
     )
+    leaderboard_file_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PROFIT_CHAIN_LEADERBOARD_FILE"),
+    )
 
     # JWT-авторизация
     jwt_secret_key: str = Field(default_factory=lambda: token_hex(32))
