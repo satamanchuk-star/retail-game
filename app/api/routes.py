@@ -105,6 +105,18 @@ def _record_finished_game() -> None:
     )
 
 
+def _close_global_day(closure_id: str | None) -> WorldDayResult:
+    """Закрыть день основной партии: 409 на завершённой игре + запись в зал славы."""
+    was_over = _state.game_over
+    try:
+        result = _engine.close_day(closure_id)
+    except GameOverError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if _state.game_over and not was_over:
+        _record_finished_game()
+    return result
+
+
 async def initialize_storage() -> None:
     """Подключить DB-снимок в lifespan, не раскрывая URL наружу."""
     global _auth, _engine, _state
@@ -433,13 +445,7 @@ async def close_day(
     payload: Annotated[DayClosureRequest | None, Body()] = None,
 ) -> WorldDayResult:
     """Закрыть день рынка с опциональной защитой от повторного запуска."""
-    was_over = _state.game_over
-    try:
-        result = _engine.close_day(payload.closure_id if payload else None)
-    except GameOverError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if _state.game_over and not was_over:
-        _record_finished_game()
+    result = _close_global_day(payload.closure_id if payload else None)
     await _save_state()
     return result
 
@@ -456,7 +462,7 @@ async def simulate_day(company_id: str) -> DayResult:
     if not any(company.id == company_id for company in _state.companies):
         raise HTTPException(status_code=400, detail="Компания не найдена")
 
-    result = _engine.close_day()
+    result = _close_global_day(None)
     await _save_state()
     report = next(item for item in result.reports if item.company_id == company_id)
     return DayResult(
@@ -486,6 +492,11 @@ async def reset_state() -> PublicGameState:
 @router.post("/demo/run", response_model=DemoRunResult)
 async def run_demo() -> DemoRunResult:
     """Запустить недельный демо-сценарий, чтобы увидеть результат симуляции."""
+    if _state.game_over:
+        raise HTTPException(
+            status_code=409,
+            detail="Партия завершена — сбросьте мир перед запуском демо.",
+        )
     result = run_demo_scenario(_state, days=7)
     await _save_state()
     return result
@@ -776,7 +787,10 @@ async def session_set_decision(
     })
 
     if session.readiness.all_ready:
-        result = session.engine.close_day()
+        try:
+            result = session.engine.close_day()
+        except GameOverError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         session.readiness.reset()
         await _ws.broadcast(session_id, {
             "event": "day_closed",
@@ -892,7 +906,7 @@ async def session_market_events(session_id: str) -> list[MarketEvent]:
 @router.get("/sessions/{session_id}/game-status", response_model=GameStatus)
 async def session_game_status(session_id: str) -> GameStatus:
     """Текущий статус игровой сессии: победитель, банкроты, сезон."""
-    session = _registry.get(session_id)
+    session = _get_session_or_404(session_id)
     state = session.state
     season_names = {1: "Весна", 2: "Лето", 3: "Осень", 4: "Зима"}
     company_by_id = {c.id: c for c in state.companies}

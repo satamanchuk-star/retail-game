@@ -103,3 +103,45 @@ async def test_api_game_status_exposes_final_standings_after_game_over() -> None
         assert body["game_over"] is True
         assert len(body["final_standings"]) == len(routes._state.companies)
         assert body["final_standings"][0]["rank"] == 1
+
+
+# ─── Регрессии: завершённая партия не должна давать 500 на других эндпоинтах ──
+
+
+@pytest.mark.asyncio
+async def test_simulate_day_returns_409_not_500_when_game_over() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post("/api/reset")
+        from app.api import routes
+
+        routes._state.companies[0].cash_rub = routes._engine.WIN_CASH_THRESHOLD
+        routes._engine.close_day(closure_id="win-day")
+        assert routes._state.game_over is True
+
+        cid = routes._state.companies[0].id
+        resp = await client.post(f"/api/simulate-day/{cid}")
+        assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_demo_run_returns_409_not_500_when_game_over() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post("/api/reset")
+        from app.api import routes
+
+        routes._state.companies[0].cash_rub = routes._engine.WIN_CASH_THRESHOLD
+        routes._engine.close_day(closure_id="win-day")
+        assert routes._state.game_over is True
+
+        resp = await client.post("/api/demo/run")
+        assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_session_game_status_returns_404_not_500_for_missing_session() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/sessions/no-such-session/game-status")
+        assert resp.status_code == 404
