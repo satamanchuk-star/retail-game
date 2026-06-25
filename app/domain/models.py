@@ -645,6 +645,18 @@ class PublicGameState(BaseModel):
     season: int = Field(default=1, ge=1, le=4)
 
 
+class FinalStanding(BaseModel):
+    """Строка итогового рейтинга компании в партии."""
+
+    rank: int = Field(ge=1)
+    company_id: str
+    name: str
+    role: Role
+    cash_rub: int
+    status: CompanyStatus
+    is_winner: bool = False
+
+
 class GameStatus(BaseModel):
     """Публичный статус текущей партии."""
 
@@ -654,6 +666,7 @@ class GameStatus(BaseModel):
     bankrupt_companies: list[str]
     season: int
     season_name: str
+    final_standings: list[FinalStanding] = Field(default_factory=list)
 
 
 class GameState(BaseModel):

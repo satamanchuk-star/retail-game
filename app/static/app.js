@@ -233,11 +233,16 @@ function renderGameStatus(status) {
     seasonIndicator.hidden = false;
     seasonIndicator.textContent = `${emoji} ${status.season_name}${dayPart}`;
   }
+  // Завершённую партию нельзя продолжать — блокируем закрытие дня
+  if (simulateButton) {
+    simulateButton.disabled = !!status.game_over;
+    simulateButton.title = status.game_over ? 'Партия завершена — нажмите «Сбросить» для новой игры' : '';
+  }
   if (!gameBanner) return;
   if (status.game_over) {
     const who = status.winner_name ? `«${status.winner_name}»` : 'Никто';
     gameBanner.className = 'game-banner victory';
-    gameBanner.innerHTML = `<strong>🏆 Игра окончена.</strong> Победитель: ${who}.`;
+    gameBanner.innerHTML = `<strong>🏆 Игра окончена.</strong> Победитель: ${who}.${renderStandingsTable(status.final_standings)}`;
     gameBanner.hidden = false;
   } else if (status.bankrupt_companies && status.bankrupt_companies.length) {
     gameBanner.className = 'game-banner alert';
@@ -247,6 +252,15 @@ function renderGameStatus(status) {
     gameBanner.hidden = true;
     gameBanner.innerHTML = '';
   }
+}
+
+function renderStandingsTable(standings) {
+  if (!standings || !standings.length) return '';
+  const rows = standings.map((s) => {
+    const medal = s.is_winner ? '🏆' : (s.status === 'bankrupt' ? '💀' : `${s.rank}.`);
+    return `<tr class="${s.is_winner ? 'winner' : ''}"><td>${medal}</td><td>${s.name}</td><td>${roleLabel(s.role)}</td><td>${formatRub.format(s.cash_rub)}</td></tr>`;
+  }).join('');
+  return `<table class="standings"><thead><tr><th>#</th><th>Компания</th><th>Роль</th><th>Капитал</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderCompanies(state) {

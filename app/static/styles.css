@@ -113,6 +113,17 @@ button {
   border-color: #f3c0c0;
   color: #b4232a;
 }
+.standings {
+  width: 100%;
+  margin-top: 14px;
+  border-collapse: collapse;
+  font-size: 15px;
+  color: var(--ink);
+}
+.standings th, .standings td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.standings th { color: var(--muted); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+.standings td:last-child, .standings th:last-child { text-align: right; }
+.standings tr.winner { background: rgba(13, 159, 110, 0.1); font-weight: 700; }
 button.secondary { background: #0d9f6e; box-shadow: 0 16px 35px rgba(13, 159, 110, 0.22); }
 button.ghost { color: var(--ink); background: #edf2ff; box-shadow: none; }
 .chart {

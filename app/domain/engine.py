@@ -35,6 +35,7 @@ from app.domain.models import (
     DeliveryOrderCreate,
     DeliveryStatus,
     FactoryFormat,
+    FinalStanding,
     FinancialReport,
     GameState,
     InventoryBatch,
@@ -58,6 +59,10 @@ from app.domain.models import (
 VAT_RATE = 0.20
 PROFIT_TAX_RATE = 0.20
 STORE_CLOSE_REFUND = 0.40
+
+
+class GameOverError(ValueError):
+    """Партия завершена: новые действия запрещены до сброса."""
 
 STARTING_CASH_BY_ROLE: dict[Role, int] = {
     Role.RETAILER: 7_500_000,
@@ -446,6 +451,9 @@ class GameEngine:
                 repeated.repeated = True
                 return repeated
 
+        if self.state.game_over:
+            raise GameOverError("Партия завершена — начните новую игру.")
+
         operations: list[DayClosureOperation] = []
         reports_by_company = {
             company.id: CompanyDayReport(company_id=company.id)
@@ -543,6 +551,25 @@ class GameEngine:
             self.state.game_over = True
             self.state.winner_company_id = active[0].id
             news.append(f"«{active[0].name}» — последняя выжившая компания на рынке!")
+
+    def compute_standings(self) -> list[FinalStanding]:
+        """Итоговый рейтинг: активные по убыванию кэша, затем банкроты."""
+        ordered = sorted(
+            self.state.companies,
+            key=lambda c: (c.status == CompanyStatus.BANKRUPT, -c.cash_rub),
+        )
+        return [
+            FinalStanding(
+                rank=index,
+                company_id=company.id,
+                name=company.name,
+                role=company.role,
+                cash_rub=company.cash_rub,
+                status=company.status,
+                is_winner=company.id == self.state.winner_company_id,
+            )
+            for index, company in enumerate(ordered, start=1)
+        ]
 
     def _ensure_company_assets(self) -> None:
         """Добавить базовые операционные объекты старым состояниям без assets."""

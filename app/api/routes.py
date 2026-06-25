@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.domain.auth import AuthService
 from app.domain.balance import FACILITY_FORMATS, STORE_FORMATS
 from app.domain.demo import run_demo_scenario
-from app.domain.engine import GameEngine
+from app.domain.engine import GameEngine, GameOverError
 from app.domain.models import (
     AuthToken,
     Bank,
@@ -407,7 +407,10 @@ async def close_day(
     payload: Annotated[DayClosureRequest | None, Body()] = None,
 ) -> WorldDayResult:
     """Закрыть день рынка с опциональной защитой от повторного запуска."""
-    result = _engine.close_day(payload.closure_id if payload else None)
+    try:
+        result = _engine.close_day(payload.closure_id if payload else None)
+    except GameOverError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await _save_state()
     return result
 
@@ -564,6 +567,7 @@ async def get_game_status() -> GameStatus:
         bankrupt_companies=bankrupt_ids,
         season=_state.season,
         season_name=season_names.get(_state.season, "Весна"),
+        final_standings=_engine.compute_standings() if _state.game_over else [],
     )
 
 
@@ -649,7 +653,10 @@ async def session_close_day(
 ) -> WorldDayResult:
     """Закрыть день в выбранной сессии и оповестить подключённых игроков."""
     session = _get_session_or_404(session_id)
-    result = session.engine.close_day(payload.closure_id if payload else None)
+    try:
+        result = session.engine.close_day(payload.closure_id if payload else None)
+    except GameOverError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.readiness.reset()
     await _ws.broadcast(session_id, {
         "event": "day_closed",
@@ -865,6 +872,7 @@ async def session_game_status(session_id: str) -> GameStatus:
         bankrupt_companies=bankrupt_ids,
         season=state.season,
         season_name=season_names.get(state.season, "Весна"),
+        final_standings=session.engine.compute_standings() if state.game_over else [],
     )
 
 
