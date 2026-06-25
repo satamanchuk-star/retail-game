@@ -513,6 +513,8 @@ class GameEngine:
 
     BANKRUPTCY_THRESHOLD = -10_000_000
     WIN_CASH_THRESHOLD = 100_000_000
+    # Эластичность спроса по цене: дешевле рынка → пул растёт, дороже → сжимается.
+    BASE_PRICE_ELASTICITY = 0.9
 
     def _check_bankruptcy_and_victory(
         self,
@@ -1444,19 +1446,37 @@ class GameEngine:
                 product = product_by_id.get(product_id)
                 if not product:
                     continue
-                # Единый пул спроса с учётом рыночных событий и сезона
+
+                # Стокированные в регионе ритейлеры этого товара
+                stocked = [
+                    c for c in retailers
+                    if self.state.inventories.get(c.id, {}).get(product_id, 0) > 0
+                ]
+                # Знаменатель доли — конкурентные веса стокированных
+                product_weight_total = sum(weights[c.id] for c in stocked) or 1.0
+
+                # Средний по рынку индекс цены (взвешенно по весам) → эластичность спроса
+                avg_price_index = (
+                    sum(decisions[c.id].target_price_index * weights[c.id] for c in stocked)
+                    / product_weight_total
+                    if stocked
+                    else 1.0
+                )
+                # Богатый регион (income_index выше) менее чувствителен к цене
+                elasticity = self.BASE_PRICE_ELASTICITY / max(region.income_index, 0.5)
+                demand_mult = avg_price_index ** (-elasticity)
+                demand_mult = max(0.45, min(1.75, demand_mult))
+
+                # Единый пул спроса: база × регион × события × сезон × эластичность по цене
                 event_mult = self._demand_event_multiplier(region_id, product_id)
                 season_mult = SEASONAL_DEMAND.get(self.state.season, {}).get(product_id, 1.0)
                 total_demand = int(
-                    product.base_daily_demand * region.demand_index * event_mult * season_mult
+                    product.base_daily_demand
+                    * region.demand_index
+                    * event_mult
+                    * season_mult
+                    * demand_mult
                 )
-
-                # Знаменатель только из тех ритейлеров, у кого есть этот товар
-                product_weight_total = sum(
-                    weights[c.id]
-                    for c in retailers
-                    if self.state.inventories.get(c.id, {}).get(product_id, 0) > 0
-                ) or 1.0
 
                 for company in retailers:
                     decision = decisions[company.id]
