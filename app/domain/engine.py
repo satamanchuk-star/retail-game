@@ -14,6 +14,7 @@ from app.domain.balance import (
     PRODUCTS,
     RAW_MATERIALS,
     REGIONS,
+    SEASONAL_DEMAND,
     STARTER_COMPANIES,
     STORE_FORMATS,
 )
@@ -24,6 +25,7 @@ from app.domain.models import (
     CompanyCreate,
     CompanyDayReport,
     CompanyDecision,
+    CompanyStatus,
     Contract,
     ContractCreate,
     ContractStatus,
@@ -42,6 +44,7 @@ from app.domain.models import (
     MarketEvent,
     MarketEventType,
     MarketListing,
+    NpcStrategy,
     PricePoint,
     ProductionRecipe,
     RawMaterial,
@@ -473,7 +476,10 @@ class GameEngine:
                 if upgrade_news:
                     news.insert(0, upgrade_news)
 
+        self._check_bankruptcy_and_victory(news, operations)
+
         self.state.day += 1
+        self.state.season = (self.state.day // 7) % 4 + 1
         self.state.last_reports = list(reports_by_company.values())
         news.insert(0, f"День {self.state.day}: рынок закрыл операционный цикл.")
         self.state.news = news + self.state.news[:8]
@@ -493,6 +499,50 @@ class GameEngine:
                 )
             )
         return result
+
+    BANKRUPTCY_THRESHOLD = -10_000_000
+    WIN_CASH_THRESHOLD = 100_000_000
+
+    def _check_bankruptcy_and_victory(
+        self,
+        news: list[str],
+        operations: list[DayClosureOperation],
+    ) -> None:
+        """Пометить банкротов и определить победителя."""
+        if self.state.game_over:
+            return
+
+        for company in self.state.companies:
+            if company.status == CompanyStatus.BANKRUPT:
+                continue
+            if company.cash_rub < self.BANKRUPTCY_THRESHOLD:
+                company.status = CompanyStatus.BANKRUPT
+                msg = f"«{company.name}» объявила банкротство (кэш {company.cash_rub:,} руб.)."
+                news.append(msg)
+                operations.append(
+                    DayClosureOperation(
+                        step="bankruptcy",
+                        company_id=company.id,
+                        amount_rub=company.cash_rub,
+                        message=msg,
+                    )
+                )
+
+        active = [c for c in self.state.companies if c.status == CompanyStatus.ACTIVE]
+
+        # Победа по капиталу
+        for company in active:
+            if company.cash_rub >= self.WIN_CASH_THRESHOLD:
+                self.state.game_over = True
+                self.state.winner_company_id = company.id
+                news.append(f"«{company.name}» выиграла — капитал {company.cash_rub:,} руб.!")
+                return
+
+        # Победа, если остался один активный
+        if len(active) == 1:
+            self.state.game_over = True
+            self.state.winner_company_id = active[0].id
+            news.append(f"«{active[0].name}» — последняя выжившая компания на рынке!")
 
     def _ensure_company_assets(self) -> None:
         """Добавить базовые операционные объекты старым состояниям без assets."""
@@ -1146,7 +1196,7 @@ class GameEngine:
     def _apply_npc_decisions(self) -> None:
         """Сформировать решения на день для всех NPC-компаний."""
         for company in self.state.companies:
-            if not company.is_npc:
+            if not company.is_npc or company.status == CompanyStatus.BANKRUPT:
                 continue
             if company.role == Role.PRODUCER:
                 self._npc_restock_raw_materials(company)
@@ -1162,10 +1212,21 @@ class GameEngine:
                 inventory = self.state.inventories.get(company.id, {})
                 total_stock = sum(inventory.values())
                 store_cap = self._daily_capacity(company.id, AssetType.STORE, 1_000)
-                price_index = 1.10 if total_stock < store_cap else 0.95
+                if company.npc_strategy == NpcStrategy.AGGRESSIVE:
+                    # Агрессивный: всегда демпингует, много маркетинга
+                    price_index = 0.88 if total_stock < store_cap else 0.82
+                    marketing = 60_000
+                elif company.npc_strategy == NpcStrategy.PREMIUM:
+                    # Премиум: высокая цена, мало маркетинга
+                    price_index = 1.30 if total_stock < store_cap * 0.5 else 1.20
+                    marketing = 15_000
+                else:
+                    # Balanced (по умолчанию)
+                    price_index = 1.10 if total_stock < store_cap else 0.95
+                    marketing = 30_000
                 self.state.decisions[company.id] = CompanyDecision(
                     target_price_index=price_index,
-                    marketing_budget_rub=30_000,
+                    marketing_budget_rub=marketing,
                 )
 
     def _npc_try_upgrade(
@@ -1344,10 +1405,11 @@ class GameEngine:
                 product = product_by_id.get(product_id)
                 if not product:
                     continue
-                # Единый пул спроса с учётом рыночных событий
+                # Единый пул спроса с учётом рыночных событий и сезона
                 event_mult = self._demand_event_multiplier(region_id, product_id)
+                season_mult = SEASONAL_DEMAND.get(self.state.season, {}).get(product_id, 1.0)
                 total_demand = int(
-                    product.base_daily_demand * region.demand_index * event_mult
+                    product.base_daily_demand * region.demand_index * event_mult * season_mult
                 )
 
                 # Знаменатель только из тех ритейлеров, у кого есть этот товар

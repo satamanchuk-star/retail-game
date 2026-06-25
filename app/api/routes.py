@@ -29,6 +29,7 @@ from app.domain.models import (
     FacilityUpgradeRequest,
     FinancialReport,
     GameState,
+    GameStatus,
     Loan,
     LoanCreate,
     MarketEvent,
@@ -547,6 +548,25 @@ async def get_market_events() -> list[MarketEvent]:
     return _state.market_events
 
 
+@router.get("/game-status", response_model=GameStatus)
+async def get_game_status() -> GameStatus:
+    """Текущий статус игры: победитель, банкроты, сезон."""
+    season_names = {1: "Весна", 2: "Лето", 3: "Осень", 4: "Зима"}
+    company_by_id = {c.id: c for c in _state.companies}
+    winner = company_by_id.get(_state.winner_company_id or "")
+    bankrupt_ids = [
+        c.id for c in _state.companies if c.status and c.status.value == "bankrupt"
+    ]
+    return GameStatus(
+        game_over=_state.game_over,
+        winner_company_id=_state.winner_company_id,
+        winner_name=winner.name if winner else None,
+        bankrupt_companies=bankrupt_ids,
+        season=_state.season,
+        season_name=season_names.get(_state.season, "Весна"),
+    )
+
+
 @router.get("/ratings", response_model=RatingBoard)
 async def get_ratings() -> RatingBoard:
     """Вернуть общий и ролевой рейтинг рынка."""
@@ -825,6 +845,27 @@ async def session_market_events(session_id: str) -> list[MarketEvent]:
     """Все рыночные события сессии (активные и истёкшие)."""
     session = _registry.get(session_id)
     return session.state.market_events
+
+
+@router.get("/sessions/{session_id}/game-status", response_model=GameStatus)
+async def session_game_status(session_id: str) -> GameStatus:
+    """Текущий статус игровой сессии: победитель, банкроты, сезон."""
+    session = _registry.get(session_id)
+    state = session.state
+    season_names = {1: "Весна", 2: "Лето", 3: "Осень", 4: "Зима"}
+    company_by_id = {c.id: c for c in state.companies}
+    winner = company_by_id.get(state.winner_company_id or "")
+    bankrupt_ids = [
+        c.id for c in state.companies if c.status and c.status.value == "bankrupt"
+    ]
+    return GameStatus(
+        game_over=state.game_over,
+        winner_company_id=state.winner_company_id,
+        winner_name=winner.name if winner else None,
+        bankrupt_companies=bankrupt_ids,
+        season=state.season,
+        season_name=season_names.get(state.season, "Весна"),
+    )
 
 
 @router.get(

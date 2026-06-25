@@ -108,6 +108,21 @@ class ProductionRecipe(BaseModel):
     conversion_cost_rub: int = Field(ge=0)
 
 
+class NpcStrategy(StrEnum):
+    """Торговая стратегия NPC-компании."""
+
+    BALANCED = "balanced"    # адаптивная цена по стокам, умеренный маркетинг
+    AGGRESSIVE = "aggressive"  # низкая цена, максимальный объём, без маркетинга
+    PREMIUM = "premium"      # высокая цена, умеренный объём, высокий маркетинг
+
+
+class CompanyStatus(StrEnum):
+    """Игровой статус компании."""
+
+    ACTIVE = "active"
+    BANKRUPT = "bankrupt"
+
+
 class Company(BaseModel):
     """Компания игрока или NPC в первом прототипе."""
 
@@ -120,6 +135,8 @@ class Company(BaseModel):
     cash_rub: int
     reputation: float = Field(default=75.0, ge=0.0, le=100.0)
     is_npc: bool = False
+    npc_strategy: NpcStrategy = NpcStrategy.BALANCED
+    status: CompanyStatus = CompanyStatus.ACTIVE
     owner_user_id: str | None = None
 
 
@@ -623,6 +640,20 @@ class PublicGameState(BaseModel):
     delivery_orders: list[DeliveryOrder] = Field(default_factory=list)
     price_history: list[PricePoint] = Field(default_factory=list)
     market_events: list[MarketEvent] = Field(default_factory=list)
+    game_over: bool = False
+    winner_company_id: str | None = None
+    season: int = Field(default=1, ge=1, le=4)
+
+
+class GameStatus(BaseModel):
+    """Публичный статус текущей партии."""
+
+    game_over: bool
+    winner_company_id: str | None
+    winner_name: str | None
+    bankrupt_companies: list[str]
+    season: int
+    season_name: str
 
 
 class GameState(BaseModel):
@@ -650,6 +681,9 @@ class GameState(BaseModel):
     delivery_orders: list[DeliveryOrder] = Field(default_factory=list)
     price_history: list[PricePoint] = Field(default_factory=list)
     market_events: list[MarketEvent] = Field(default_factory=list)
+    game_over: bool = False
+    winner_company_id: str | None = None
+    season: int = Field(default=1, ge=1, le=4)
     users: list[User] = Field(default_factory=list)
     sessions: dict[str, str] = Field(default_factory=dict)
 

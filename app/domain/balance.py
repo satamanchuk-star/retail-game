@@ -7,6 +7,7 @@ from app.domain.models import (
     Company,
     FacilityOption,
     FactoryFormat,
+    NpcStrategy,
     Product,
     ProductionRecipe,
     RawMaterial,
@@ -472,6 +473,24 @@ STARTER_COMPANIES: list[Company] = [
         cash_rub=8_000_000,
         is_npc=True,
     ),
+    Company(
+        id="npc_retailer_aggr",
+        name="Дискаунт-маркет",
+        role=Role.RETAILER,
+        region_id="east_port",
+        cash_rub=6_000_000,
+        is_npc=True,
+        npc_strategy=NpcStrategy.AGGRESSIVE,
+    ),
+    Company(
+        id="npc_producer_prem",
+        name="Премиум-фуд",
+        role=Role.PRODUCER,
+        region_id="volga",
+        cash_rub=40_000_000,
+        is_npc=True,
+        npc_strategy=NpcStrategy.PREMIUM,
+    ),
 ]
 
 INITIAL_ASSETS: list[BusinessAsset] = [
@@ -523,6 +542,30 @@ INITIAL_ASSETS: list[BusinessAsset] = [
         quality_level=1.0,
         store_format=StoreFormat.CONVENIENCE,
     ),
+    BusinessAsset(
+        id="asset_npc_aggr_store",
+        company_id="npc_retailer_aggr",
+        asset_type=AssetType.STORE,
+        name="Дискаунт «Копейка» в порту",
+        region_id="east_port",
+        capacity_units_per_day=1_800,
+        fixed_cost_rub_per_day=75_000,
+        storage_type="смешанное",
+        quality_level=1.0,
+        store_format=StoreFormat.CONVENIENCE,
+    ),
+    BusinessAsset(
+        id="asset_npc_prem_factory",
+        company_id="npc_producer_prem",
+        asset_type=AssetType.FACTORY,
+        name="Премиум-цех на Волге",
+        region_id="volga",
+        capacity_units_per_day=2_500,
+        fixed_cost_rub_per_day=125_000,
+        storage_type="производство",
+        quality_level=1.0,
+        facility_format=FactoryFormat.PLANT.value,
+    ),
 ]
 
 INITIAL_INVENTORIES: dict[str, dict[str, int]] = {
@@ -550,6 +593,17 @@ INITIAL_INVENTORIES: dict[str, dict[str, int]] = {
         "eggs": 400,
         "water": 600,
     },
+    "npc_retailer_aggr": {
+        "bread": 900,
+        "milk": 750,
+        "water": 700,
+        "eggs": 350,
+    },
+    "npc_producer_prem": {
+        "bread": 3_000,
+        "milk": 2_500,
+        "yogurt": 1_500,
+    },
 }
 
 INITIAL_RAW_INVENTORIES: dict[str, dict[str, float]] = {
@@ -557,7 +611,59 @@ INITIAL_RAW_INVENTORIES: dict[str, dict[str, float]] = {
         "grain": 6_000.0,
         "raw_milk": 5_400.0,
         "packaging": 1_200.0,
-    }
+    },
+    "npc_producer_prem": {
+        "grain": 4_500.0,
+        "raw_milk": 4_000.0,
+        "packaging": 900.0,
+    },
+}
+
+# season 1=spring, 2=summer, 3=autumn, 4=winter; day → season = (day // 7) % 4 + 1
+SEASONAL_DEMAND: dict[int, dict[str, float]] = {
+    1: {  # весна
+        "water": 1.15,
+        "juice": 1.10,
+        "soda": 1.10,
+        "fruits": 1.20,
+        "vegetables": 1.10,
+        "chocolate": 0.90,
+        "meat": 0.95,
+    },
+    2: {  # лето
+        "water": 1.40,
+        "soda": 1.35,
+        "juice": 1.25,
+        "fruits": 1.40,
+        "vegetables": 1.25,
+        "ice_cream": 1.80,  # нет в FMCG-матрице, безопасно игнорируется
+        "tea": 0.80,
+        "coffee": 0.85,
+        "meat": 0.90,
+        "frozen": 1.20,
+    },
+    3: {  # осень
+        "vegetables": 1.30,
+        "fruits": 1.25,
+        "potato": 1.20,
+        "juice": 1.10,
+        "grains": 1.10,
+        "water": 0.85,
+        "soda": 0.85,
+    },
+    4: {  # зима
+        "meat": 1.25,
+        "sausage": 1.15,
+        "fish": 1.15,
+        "tea": 1.35,
+        "coffee": 1.25,
+        "chocolate": 1.20,
+        "frozen": 1.15,
+        "water": 0.70,
+        "soda": 0.75,
+        "vegetables": 0.80,
+        "fruits": 0.85,
+    },
 }
 
 BANKS: list[Bank] = [
