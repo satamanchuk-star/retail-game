@@ -487,6 +487,9 @@ class GameEngine:
                 upgrade_news = self._npc_try_upgrade(company, reports_by_company)
                 if upgrade_news:
                     news.insert(0, upgrade_news)
+                expand_news = self._npc_try_expand(company, reports_by_company)
+                if expand_news:
+                    news.insert(0, expand_news)
 
         self._check_bankruptcy_and_victory(news, operations)
 
@@ -1511,6 +1514,38 @@ class GameEngine:
                     target_price_index=price_index,
                     marketing_budget_rub=marketing,
                 )
+
+    def _npc_try_expand(
+        self, company: Company, day_reports: dict[str, CompanyDayReport]
+    ) -> str | None:
+        """NPC расширяется НОВЫМ объектом — только когда прибылен (пресс преимущества).
+
+        Расширение несёт двойные фикс-расходы, поэтому окупается лишь у растущего
+        бизнеса: гейтим по положительной прибыли дня, иначе бот «осушит» кассу.
+        """
+        report = day_reports.get(company.id)
+        if report is None or report.profit_rub < 500_000:
+            return None
+        try:
+            if company.role == Role.RETAILER:
+                if len(self._company_assets(company.id, AssetType.STORE)) >= 3:
+                    return None
+                fmt = StoreFormat.CONVENIENCE
+                if company.cash_rub >= STORE_FORMATS[fmt].build_cost_rub * 3:
+                    self.build_store(company.id, fmt)
+                    return f"NPC «{company.name}» открыл новый магазин ({STORE_FORMATS[fmt].name})."
+            else:
+                asset_type, presets = self._facility_catalog(company.role)
+                if len(self._company_assets(company.id, asset_type)) >= 2:
+                    return None
+                # Новый объект начинаем с самого дешёвого тира (рост с малого, не осушая кассу)
+                cheapest = min(presets.values(), key=lambda x: x.build_cost_rub)
+                if company.cash_rub >= cheapest.build_cost_rub * 3:
+                    self.build_facility(company.id, cheapest.tier)
+                    return f"NPC «{company.name}» построил новый объект ({cheapest.name})."
+        except ValueError:
+            pass
+        return None
 
     def _npc_try_upgrade(
         self,
