@@ -136,6 +136,25 @@ button {
 .leader small { color: var(--muted); }
 .leader span { font-weight: 600; }
 
+/* Сворачиваемая диагностика — убирает отладочные панели из основного вида */
+.dev-details {
+  border: 1px dashed var(--line);
+  border-radius: 18px;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.4);
+}
+.dev-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 8px 4px;
+  list-style: none;
+}
+.dev-details > summary::-webkit-details-marker { display: none; }
+.dev-details > summary::before { content: '▸ '; }
+.dev-details[open] > summary::before { content: '▾ '; }
+.dev-details > section { margin-top: 12px; }
+
 /* Онбординг-гид (Фаза 5) */
 .onboarding {
   background: linear-gradient(135deg, #eef4ff, #f6efff);

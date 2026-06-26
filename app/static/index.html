@@ -61,27 +61,30 @@
       </article>
     </section>
 
-    <section class="grid two">
-      <article class="panel compact">
-        <h2>Сохранение мира</h2>
-        <p id="persistence-status" class="muted">Проверяем режим сохранения...</p>
-        <p id="database-status" class="muted">Проверяем DB-режим...</p>
-      </article>
-      <article class="panel compact">
-        <h2>Журнал закрытия дня</h2>
-        <p class="muted">Повторный запуск с тем же ключом не дублирует деньги, остатки и отчёты.</p>
-        <div class="closures" id="day-closures"></div>
-      </article>
-    </section>
+    <details class="dev-details">
+      <summary>🔧 Диагностика и разработка</summary>
+      <section class="grid two">
+        <article class="panel compact">
+          <h2>Сохранение мира</h2>
+          <p id="persistence-status" class="muted">Проверяем режим сохранения...</p>
+          <p id="database-status" class="muted">Проверяем DB-режим...</p>
+        </article>
+        <article class="panel compact">
+          <h2>Журнал закрытия дня</h2>
+          <p class="muted">Повторный запуск с тем же ключом не дублирует деньги, остатки и отчёты.</p>
+          <div class="closures" id="day-closures"></div>
+        </article>
+      </section>
 
-    <section class="panel compact">
-      <div class="panel-title">
-        <h2>Статус разработки</h2>
-        <span id="project-progress">Проверяем план...</span>
-      </div>
-      <p id="project-focus" class="muted">Загружаем текущий фокус...</p>
-      <div class="roadmap" id="project-roadmap"></div>
-    </section>
+      <section class="panel compact">
+        <div class="panel-title">
+          <h2>Статус разработки</h2>
+          <span id="project-progress">Проверяем план...</span>
+        </div>
+        <p id="project-focus" class="muted">Загружаем текущий фокус...</p>
+        <div class="roadmap" id="project-roadmap"></div>
+      </section>
+    </details>
 
     <section class="grid two">
       <article class="panel">
