@@ -72,6 +72,9 @@ const seasonIndicator = document.querySelector('#season-indicator');
 const gameBanner = document.querySelector('#game-banner');
 const leaderboardRoot = document.querySelector('#leaderboard');
 const advisorRoot = document.querySelector('#advisor');
+const onboardingRoot = document.querySelector('#onboarding');
+const onboardingGoal = document.querySelector('#onboarding-goal');
+const onboardingDismiss = document.querySelector('#onboarding-dismiss');
 let accessToken = localStorage.getItem('profitChainAccessToken');
 let currentUser = JSON.parse(localStorage.getItem('profitChainUser') || 'null');
 
@@ -264,6 +267,29 @@ function renderGameStatus(status) {
     gameBanner.hidden = true;
     gameBanner.innerHTML = '';
   }
+}
+
+function renderOnboarding(state) {
+  if (!onboardingRoot) return;
+  if (localStorage.getItem('profitChainOnboardingDismissed') === '1') {
+    onboardingRoot.hidden = true;
+    return;
+  }
+  const mine = (state.companies || []).find((c) => !c.is_npc) || (state.companies || []).find((c) => c.id === 'player');
+  if (onboardingGoal) {
+    const who = mine ? `Ты — «${mine.name}» (${roleLabel(mine.role)}).` : '';
+    onboardingGoal.innerHTML =
+      `Цель: построй цепочку <b>сырьё → производство → логистика → полка → покупатель</b> и обгони ботов. ` +
+      `Победа — капитал <b>100 млн ₽</b> или когда останешься единственным на рынке. ${who}`;
+  }
+  onboardingRoot.hidden = false;
+}
+
+if (onboardingDismiss) {
+  onboardingDismiss.addEventListener('click', () => {
+    localStorage.setItem('profitChainOnboardingDismissed', '1');
+    if (onboardingRoot) onboardingRoot.hidden = true;
+  });
 }
 
 const ADVISOR_ICON = { ok: '✅', info: '💡', warning: '⚠️', danger: '🛑' };
@@ -618,6 +644,7 @@ async function render() {
   renderGameStatus(gameStatus);
   renderLeaderboard(leaderboard);
   renderAdvisor(advisor);
+  renderOnboarding(state);
   renderContracts(state);
   renderBanks(state);
   renderLoans(state);
@@ -807,6 +834,7 @@ runDemoButton.addEventListener('click', async () => {
 
 resetButton.addEventListener('click', async () => {
   await api('/api/reset', { method: 'POST' });
+  localStorage.removeItem('profitChainOnboardingDismissed'); // новая партия — снова покажем гид
   demoSummary.textContent = 'Мир сброшен. Запусти демо, чтобы увидеть динамику прибыли и операций.';
   profitChart.innerHTML = '';
   demoTable.innerHTML = '';

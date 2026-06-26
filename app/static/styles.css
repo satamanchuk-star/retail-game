@@ -136,6 +136,14 @@ button {
 .leader small { color: var(--muted); }
 .leader span { font-weight: 600; }
 
+/* Онбординг-гид (Фаза 5) */
+.onboarding {
+  background: linear-gradient(135deg, #eef4ff, #f6efff);
+  border-color: #bcd4ff;
+}
+.onboarding-steps { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 8px; color: var(--ink); }
+.onboarding-steps li { line-height: 1.4; }
+
 /* Советник (Фаза 5) */
 .advisor { display: grid; gap: 10px; }
 .tip {
