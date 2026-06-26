@@ -1478,6 +1478,8 @@ class GameEngine:
 
     def _apply_npc_decisions(self) -> None:
         """Сформировать решения на день для всех NPC-компаний."""
+        # Снимок прошлых решений — чтобы реакция на цены не зависела от порядка обхода
+        prev_decisions = {cid: d.target_price_index for cid, d in self.state.decisions.items()}
         for company in self.state.companies:
             if not company.is_npc or company.status == CompanyStatus.BANKRUPT:
                 continue
@@ -1510,8 +1512,26 @@ class GameEngine:
                     # Balanced (по умолчанию)
                     price_index = 1.10 if total_stock < store_cap else 0.95
                     marketing = 30_000
+
+                # Реакция на цены конкурентов в регионе — это и есть «ценовые войны»
+                rival_prices = [
+                    prev_decisions[c.id]
+                    for c in self.state.companies
+                    if c.role == Role.RETAILER and c.id != company.id
+                    and c.region_id == company.region_id
+                    and c.status == CompanyStatus.ACTIVE and c.id in prev_decisions
+                ]
+                if rival_prices:
+                    market_price = sum(rival_prices) / len(rival_prices)
+                    if company.npc_strategy == NpcStrategy.AGGRESSIVE:
+                        price_index = min(price_index, market_price - 0.05)  # всегда чуть дешевле рынка
+                    elif company.npc_strategy == NpcStrategy.BALANCED:
+                        price_index = (price_index + market_price) / 2  # тянется к рынку
+                    # PREMIUM держит свою цену независимо от демпинга
+                    price_index = max(0.75, min(1.45, price_index))
+
                 self.state.decisions[company.id] = CompanyDecision(
-                    target_price_index=price_index,
+                    target_price_index=round(price_index, 3),
                     marketing_budget_rub=marketing,
                 )
 
