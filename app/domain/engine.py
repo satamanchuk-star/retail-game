@@ -605,6 +605,24 @@ class GameEngine:
                 severity="warning",
                 message="Низкий запас кэша — следи за расходами и не перетаривайся.",
             ))
+        elif company.cash_rub > 15_000_000:
+            tips.append(AdvisorTip(
+                severity="info",
+                message="Свободный капитал простаивает — построй/улучши объект или расширь ассортимент, чтобы расти.",
+            ))
+
+        # Скорая просрочка — для всех, кто держит товар (срабатывает раньше списания)
+        soon_day = self.state.day + 2
+        expiring = sum(
+            b.quantity
+            for b in self.state.inventory_batches
+            if b.company_id == company_id and b.quantity > 0 and 0 < b.expires_day <= soon_day
+        )
+        if expiring > 0:
+            tips.append(AdvisorTip(
+                severity="warning",
+                message=f"Скоро просрочка: {expiring:,} ед. спишутся в ближайшие дни — продай или снизь цену.",
+            ))
 
         report = next(
             (r for r in self.state.last_reports if r.company_id == company_id), None
@@ -667,7 +685,9 @@ class GameEngine:
                 severity="ok",
                 message="Дела стабильны — оптимизируй цепочку, цены и ассортимент, чтобы оторваться от ботов.",
             ))
-        return tips
+        # Сначала самое важное: danger → warning → info → ok
+        severity_order = {"danger": 0, "warning": 1, "info": 2, "ok": 3}
+        return sorted(tips, key=lambda t: severity_order.get(t.severity, 9))
 
     def _ensure_company_assets(self) -> None:
         """Добавить базовые операционные объекты старым состояниям без assets."""
