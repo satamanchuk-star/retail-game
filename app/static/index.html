@@ -7,16 +7,21 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Экономическая стратегия <span id="season-indicator" class="season-chip" hidden></span></p>
-        <h1>Цепочка прибыли</h1>
-        <p class="lead">Договаривайся, конкурируй и зарабатывай на живом рынке поставок.</p>
-      </div>
-      <div class="hero-actions"><button id="simulate">Завершить день</button><button id="run-demo" class="secondary">Запустить демо 7 дней</button><button id="reset" class="ghost">Сбросить</button></div>
-    </section>
+  <header class="hud">
+    <div class="hud-brand">📦 Цепочка&nbsp;прибыли</div>
+    <div class="hud-stats">
+      <span class="hud-stat"><small>День</small><b id="hud-day">—</b></span>
+      <span class="season-chip" id="season-indicator" hidden></span>
+      <span class="hud-stat"><small id="hud-cash-label">Капитал</small><b id="hud-cash">—</b></span>
+    </div>
+    <div class="hud-actions">
+      <button id="simulate">Завершить день ▶</button>
+      <button id="run-demo" class="secondary">Демо 7 дней</button>
+      <button id="reset" class="ghost">Сбросить</button>
+    </div>
+  </header>
 
+  <main class="shell">
     <section id="game-banner" class="game-banner" hidden></section>
 
     <section id="onboarding" class="panel onboarding" hidden>
@@ -26,10 +31,10 @@
       </div>
       <p class="lead" id="onboarding-goal"></p>
       <ol class="onboarding-steps">
-        <li>Задай <b>цену</b> и <b>маркетинг</b> в панели «Решения компании», затем нажми <b>«Завершить день»</b>.</li>
+        <li>Вкладка <b>«Моя компания»</b> → задай <b>цену</b> и <b>маркетинг</b>, нажми <b>«Завершить день»</b> вверху.</li>
         <li>Читай <b>🧭 Советника</b> — он подсказывает, что происходит и что делать дальше.</li>
         <li>Расширяй <b>ассортимент</b>, строй <b>магазины/заводы/склады</b>, борись за долю рынка с ботами.</li>
-        <li>Следи за <b>финансами</b> и <b>цепочкой</b>: сырьё → производство → логистика → полка → покупатель.</li>
+        <li>Цепочка: <b>сырьё → производство → логистика → полка → покупатель</b>.</li>
       </ol>
     </section>
 
@@ -41,247 +46,269 @@
       <div class="advisor" id="advisor"></div>
     </section>
 
-    <section class="grid cards" id="metrics"></section>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="overview" type="button">📊 Обзор</button>
+      <button class="tab" data-tab="company" type="button">🏪 Моя компания</button>
+      <button class="tab" data-tab="market" type="button">🌍 Рынок</button>
+      <button class="tab" data-tab="more" type="button">⚙️ Ещё</button>
+    </nav>
 
-    <section class="grid two">
-      <article class="panel">
-        <h2>Игрок и доступ</h2>
-        <p id="auth-status" class="muted">Вы играете без входа. Созданные после входа компании будут закреплены за игроком.</p>
-        <form id="auth-form" class="form-grid">
-          <input name="username" placeholder="Имя игрока" minlength="3" maxlength="32" value="player1" />
-          <input name="password" placeholder="Пароль" type="password" minlength="8" value="password123" />
-          <button name="action" value="register" type="submit">Регистрация</button>
-          <button name="action" value="login" type="submit" class="secondary">Войти</button>
-          <button id="logout" type="button" class="ghost">Выйти</button>
-        </form>
-      </article>
-      <article class="panel compact">
-        <h2>Правила владения</h2>
-        <p class="muted">Авторизованный игрок может менять решения и брать кредиты только для своих компаний. Публичное состояние не содержит пароли и токены.</p>
-      </article>
-    </section>
+    <!-- ───────────────────────── ОБЗОР ───────────────────────── -->
+    <div class="tab-pane active" data-pane="overview">
+      <section class="grid cards" id="metrics"></section>
 
-    <details class="dev-details">
-      <summary>🔧 Диагностика и разработка</summary>
       <section class="grid two">
-        <article class="panel compact">
-          <h2>Сохранение мира</h2>
-          <p id="persistence-status" class="muted">Проверяем режим сохранения...</p>
-          <p id="database-status" class="muted">Проверяем DB-режим...</p>
+        <article class="panel">
+          <h2>Компании и отчёты</h2>
+          <div class="companies" id="companies"></div>
         </article>
-        <article class="panel compact">
-          <h2>Журнал закрытия дня</h2>
-          <p class="muted">Повторный запуск с тем же ключом не дублирует деньги, остатки и отчёты.</p>
-          <div class="closures" id="day-closures"></div>
+        <article class="panel">
+          <h2>Рейтинг рынка</h2>
+          <div class="ratings" id="ratings"></div>
         </article>
       </section>
 
-      <section class="panel compact">
-        <div class="panel-title">
-          <h2>Статус разработки</h2>
-          <span id="project-progress">Проверяем план...</span>
-        </div>
-        <p id="project-focus" class="muted">Загружаем текущий фокус...</p>
-        <div class="roadmap" id="project-roadmap"></div>
+      <section class="grid two">
+        <article class="panel">
+          <h2>📰 Новости рынка</h2>
+          <ul class="news" id="news"></ul>
+        </article>
+        <article class="panel">
+          <div class="panel-title">
+            <h2>🏆 Зал славы</h2>
+            <span class="muted">Победители завершённых партий</span>
+          </div>
+          <div class="leaderboard" id="leaderboard"></div>
+        </article>
       </section>
-    </details>
+    </div>
 
-    <section class="grid two">
-      <article class="panel">
-        <h2>Быстрый вход на рынок</h2>
-        <form id="company-form" class="form-grid">
-          <input name="name" value="Моя сеть" minlength="2" maxlength="60" />
-          <select name="role">
-            <option value="retailer">Ритейлер</option>
-            <option value="producer">Производитель</option>
-            <option value="distributor">Дистрибьютор</option>
-          </select>
-          <select name="region_id" id="region-select"></select>
-          <button type="submit">Создать компанию</button>
+    <!-- ──────────────────────── МОЯ КОМПАНИЯ ──────────────────── -->
+    <div class="tab-pane" data-pane="company" hidden>
+      <section class="grid two">
+        <article class="panel">
+          <h2>🎯 Решение на день</h2>
+          <p class="muted">Главный ход: задай цену и маркетинг своей компании, затем заверши день.</p>
+          <form id="decision-form" class="form-grid">
+            <select name="company_id" id="company-select"></select>
+            <label>Индекс цены <input name="target_price_index" type="number" min="0.65" max="1.6" step="0.05" value="1.05" /></label>
+            <label>Производство <input name="production_units" type="number" min="0" max="50000" value="1200" /></label>
+            <label>Логистика <input name="logistics_capacity_units" type="number" min="0" max="50000" value="1500" /></label>
+            <label>Маркетинг, ₽ <input name="marketing_budget_rub" type="number" min="0" max="5000000" value="50000" /></label>
+            <button type="submit">Сохранить решение</button>
+          </form>
+        </article>
+        <article class="panel">
+          <h2>🏗️ Создать компанию</h2>
+          <p class="muted">Войди как новый игрок рынка: выбери роль и регион.</p>
+          <form id="company-form" class="form-grid">
+            <input name="name" value="Моя сеть" minlength="2" maxlength="60" />
+            <select name="role">
+              <option value="retailer">Ритейлер</option>
+              <option value="producer">Производитель</option>
+              <option value="distributor">Дистрибьютор</option>
+            </select>
+            <select name="region_id" id="region-select"></select>
+            <button type="submit">Создать компанию</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>🏪 Развитие сети (магазины)</h2>
+        <p class="muted">Ритейлер строит новые точки за наличные. Каждый магазин добавляет торговую мощность и постоянные расходы.</p>
+        <form id="store-form" class="form-grid">
+          <select name="company_id" id="store-company-select"></select>
+          <select name="store_format" id="store-format-select"></select>
+          <input name="name" placeholder="Название (необязательно)" maxlength="60" />
+          <button type="submit">Построить магазин</button>
         </form>
-      </article>
-      <article class="panel">
-        <h2>Решение на день</h2>
-        <form id="decision-form" class="form-grid">
-          <select name="company_id" id="company-select"></select>
-          <label>Индекс цены <input name="target_price_index" type="number" min="0.65" max="1.6" step="0.05" value="1.05" /></label>
-          <label>Производство <input name="production_units" type="number" min="0" max="50000" value="1200" /></label>
-          <label>Логистика <input name="logistics_capacity_units" type="number" min="0" max="50000" value="1500" /></label>
-          <label>Маркетинг, ₽ <input name="marketing_budget_rub" type="number" min="0" max="5000000" value="50000" /></label>
-          <button type="submit">Сохранить решение</button>
+        <div class="store-formats" id="store-formats"></div>
+        <h3 class="subhead">Магазины выбранной компании</h3>
+        <div class="store-list" id="store-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>🏭 Развитие производства и логистики</h2>
+        <p class="muted">Производитель строит заводы, дистрибьютор — склады. Каждый объект добавляет дневную мощность роли и постоянные расходы.</p>
+        <form id="facility-form" class="form-grid">
+          <select name="company_id" id="facility-company-select"></select>
+          <select name="tier" id="facility-format-select"></select>
+          <input name="name" placeholder="Название (необязательно)" maxlength="60" />
+          <button type="submit">Построить объект</button>
         </form>
-      </article>
-    </section>
+        <div class="store-formats" id="facility-formats"></div>
+        <h3 class="subhead">Объекты выбранной компании</h3>
+        <div class="store-list" id="facility-list"></div>
+      </section>
 
-    <section class="panel">
-      <h2>Развитие сети (магазины)</h2>
-      <p class="muted">Ритейлер строит новые точки за наличные. Каждый магазин добавляет торговую мощность и постоянные расходы при закрытии дня.</p>
-      <form id="store-form" class="form-grid">
-        <select name="company_id" id="store-company-select"></select>
-        <select name="store_format" id="store-format-select"></select>
-        <input name="name" placeholder="Название (необязательно)" maxlength="60" />
-        <button type="submit">Построить магазин</button>
-      </form>
-      <div class="store-formats" id="store-formats"></div>
-      <h3 class="subhead">Магазины выбранной компании</h3>
-      <div class="store-list" id="store-list"></div>
-    </section>
+      <section class="grid two">
+        <article class="panel">
+          <h2>💰 Финансы и налоги</h2>
+          <p class="muted">P&L, cash-flow, НДС и долговая нагрузка после закрытия дня.</p>
+          <div class="finances" id="finances"></div>
+        </article>
+        <article class="panel">
+          <h2>🏦 Банки и кредит</h2>
+          <form id="loan-form" class="form-grid">
+            <select name="company_id" id="loan-company-select"></select>
+            <select name="bank_id" id="bank-select"></select>
+            <label>Сумма кредита, ₽ <input name="principal_rub" type="number" min="1" max="100000000" value="3000000" /></label>
+            <label>Срок, дней <input name="term_days" type="number" min="7" max="365" value="30" /></label>
+            <button type="submit">Взять кредит</button>
+          </form>
+          <div class="banks" id="banks"></div>
+        </article>
+      </section>
 
-    <section class="panel">
-      <h2>Развитие производства и логистики</h2>
-      <p class="muted">Производитель строит заводы, дистрибьютор — склады. Каждый объект добавляет дневную мощность роли и постоянные расходы.</p>
-      <form id="facility-form" class="form-grid">
-        <select name="company_id" id="facility-company-select"></select>
-        <select name="tier" id="facility-format-select"></select>
-        <input name="name" placeholder="Название (необязательно)" maxlength="60" />
-        <button type="submit">Построить объект</button>
-      </form>
-      <div class="store-formats" id="facility-formats"></div>
-      <h3 class="subhead">Объекты выбранной компании</h3>
-      <div class="store-list" id="facility-list"></div>
-    </section>
+      <section class="grid two">
+        <article class="panel">
+          <h2>📄 Создать контракт</h2>
+          <form id="contract-form" class="form-grid">
+            <select name="seller_id" id="seller-select"></select>
+            <select name="buyer_id" id="buyer-select"></select>
+            <select name="product_id" id="product-select"></select>
+            <label>Количество <input name="quantity" type="number" min="1" max="1000000" value="250" /></label>
+            <label>Цена за единицу, ₽ <input name="unit_price_rub" type="number" min="1" max="1000000" value="52" /></label>
+            <label>День исполнения <input name="due_day" id="due-day" type="number" min="1" value="1" /></label>
+            <label>Штраф, ₽ <input name="penalty_rub" type="number" min="0" max="100000000" value="5000" /></label>
+            <button type="submit">Заключить контракт</button>
+          </form>
+        </article>
+        <article class="panel">
+          <h2>📑 Кредиты и контракты</h2>
+          <div class="loans" id="loans"></div>
+          <div class="contracts" id="contracts"></div>
+        </article>
+      </section>
 
-    <section class="panel">
-      <div class="panel-title">
-        <h2>Стратегическая карта</h2>
-        <span>5 регионов · дороги · спрос · логистические риски</span>
-      </div>
-      <div class="map" id="map"></div>
-    </section>
+      <section class="grid two">
+        <article class="panel">
+          <h2>⚙️ Операционные объекты</h2>
+          <p class="muted">Магазины, заводы и склады задают реальные дневные мощности и постоянные расходы.</p>
+          <div class="assets" id="assets"></div>
+        </article>
+        <article class="panel">
+          <h2>🌾 Сырьё и рецептуры</h2>
+          <p class="muted">Производитель ограничен сырьём: выпуск списывает зерно, молоко-сырьё и упаковку.</p>
+          <div class="raw-materials" id="raw-materials"></div>
+        </article>
+      </section>
 
-    <section class="panel">
-      <div class="panel-title">
-        <h2>Рыночные события</h2>
-        <span id="events-count" class="muted">Загружаем...</span>
-      </div>
-      <p class="muted">Случайные шоки спроса и предложения с датой истечения. Влияют на пул спроса ритейлеров.</p>
-      <div id="market-events"></div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title">
-        <h2>История цен</h2>
-        <span class="muted">Средневзвешенная цена и объём после закрытия дня</span>
-      </div>
-      <div class="form-grid" style="margin-bottom:12px">
-        <select id="price-product-filter"><option value="">Все товары</option></select>
-        <select id="price-region-filter"><option value="">Все регионы</option></select>
-      </div>
-      <div id="price-history"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Заявки дистрибьютора</h2>
-      <p class="muted">Грузоотправитель создаёт заявку; указанный дистрибьютор принимает её и выполняет при закрытии дня.</p>
-      <form id="delivery-order-form" class="form-grid">
-        <select name="shipper_id" id="do-shipper-select"></select>
-        <select name="distributor_id" id="do-distributor-select"></select>
-        <select name="receiver_id" id="do-receiver-select"></select>
-        <select name="product_id" id="do-product-select"></select>
-        <label>Количество <input name="quantity" type="number" min="1" max="500000" value="500" /></label>
-        <label>Тариф ₽/ед. <input name="fee_rub_per_unit" type="number" min="0" max="10000000" value="10" /></label>
-        <label>День исполнения <input name="due_day" id="do-due-day" type="number" min="1" value="1" /></label>
-        <button type="submit">Создать заявку</button>
-      </form>
-      <div id="delivery-orders-list"></div>
-    </section>
-
-    <section class="grid two">
-      <article class="panel">
-        <h2>Компании и отчёты</h2>
-        <div class="companies" id="companies"></div>
-      </article>
-      <article class="panel">
-        <h2>Рейтинг рынка</h2>
-        <div class="ratings" id="ratings"></div>
-      </article>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title">
-        <h2>🏆 Зал славы</h2>
-        <span class="muted">Победители завершённых партий</span>
-      </div>
-      <div class="leaderboard" id="leaderboard"></div>
-    </section>
-
-    <section class="grid two">
-      <article class="panel">
-        <h2>Финансы и налоги</h2>
-        <p class="muted">P&L, cash-flow, НДС и долговая нагрузка после закрытия дня.</p>
-        <div class="finances" id="finances"></div>
-      </article>
-      <article class="panel">
-        <h2>Банки и кредит</h2>
-        <form id="loan-form" class="form-grid">
-          <select name="company_id" id="loan-company-select"></select>
-          <select name="bank_id" id="bank-select"></select>
-          <label>Сумма кредита, ₽ <input name="principal_rub" type="number" min="1" max="100000000" value="3000000" /></label>
-          <label>Срок, дней <input name="term_days" type="number" min="7" max="365" value="30" /></label>
-          <button type="submit">Взять кредит</button>
-        </form>
-        <div class="banks" id="banks"></div>
-      </article>
-      <article class="panel">
-        <h2>Создать контракт</h2>
-        <form id="contract-form" class="form-grid">
-          <select name="seller_id" id="seller-select"></select>
-          <select name="buyer_id" id="buyer-select"></select>
-          <select name="product_id" id="product-select"></select>
-          <label>Количество <input name="quantity" type="number" min="1" max="1000000" value="250" /></label>
-          <label>Цена за единицу, ₽ <input name="unit_price_rub" type="number" min="1" max="1000000" value="52" /></label>
-          <label>День исполнения <input name="due_day" id="due-day" type="number" min="1" value="1" /></label>
-          <label>Штраф, ₽ <input name="penalty_rub" type="number" min="0" max="100000000" value="5000" /></label>
-          <button type="submit">Заключить контракт</button>
-        </form>
-      </article>
-      <article class="panel">
-        <h2>Кредиты и контракты</h2>
-        <div class="loans" id="loans"></div>
-        <div class="contracts" id="contracts"></div>
-      </article>
-      <article class="panel">
-        <h2>Новости и советник</h2>
-        <ul class="news" id="news"></ul>
-      </article>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title">
-        <h2>Видимый результат симуляции</h2>
-        <span id="demo-summary">Запусти демо, чтобы увидеть динамику прибыли и операций.</span>
-      </div>
-      <div class="chart" id="profit-chart"></div>
-      <div class="demo-table" id="demo-table"></div>
-    </section>
-
-    <section class="grid two">
-      <article class="panel">
-        <h2>Операционные объекты</h2>
-        <p class="muted">Магазины, заводы и склады задают реальные дневные мощности и постоянные расходы.</p>
-        <div class="assets" id="assets"></div>
-      </article>
-      <article class="panel">
-        <h2>Сырьё и рецептуры</h2>
-        <p class="muted">Производитель теперь ограничен сырьём: выпуск списывает зерно, молоко-сырьё и упаковку.</p>
-        <div class="raw-materials" id="raw-materials"></div>
-      </article>
-    </section>
-
-    <section class="grid two">
-      <article class="panel">
-        <h2>Партии и срок годности</h2>
-        <p class="muted">FIFO-остатки показывают владельца, товар, количество, качество и день истечения.</p>
+      <section class="panel">
+        <h2>📦 Партии и срок годности</h2>
+        <p class="muted">FIFO-остатки: владелец, товар, количество, качество и день истечения.</p>
         <div class="batches" id="inventory-batches"></div>
-      </article>
-    </section>
+      </section>
+    </div>
 
-    <section class="grid two">
-      <article class="panel">
-        <h2>Товарная матрица</h2>
+    <!-- ───────────────────────── РЫНОК ───────────────────────── -->
+    <div class="tab-pane" data-pane="market" hidden>
+      <section class="panel">
+        <div class="panel-title">
+          <h2>🗺️ Стратегическая карта</h2>
+          <span>5 регионов · спрос · доходы · логистические риски</span>
+        </div>
+        <div class="map" id="map"></div>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <div class="panel-title">
+            <h2>⚡ Рыночные события</h2>
+            <span id="events-count" class="muted">Загружаем...</span>
+          </div>
+          <p class="muted">Шоки спроса и предложения с датой истечения. Влияют на пул спроса.</p>
+          <div id="market-events"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-title">
+            <h2>📈 История цен</h2>
+            <span class="muted">Средневзвешенная цена и объём</span>
+          </div>
+          <div class="form-grid" style="margin-bottom:12px">
+            <select id="price-product-filter"><option value="">Все товары</option></select>
+            <select id="price-region-filter"><option value="">Все регионы</option></select>
+          </div>
+          <div id="price-history"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>🚚 Заявки дистрибьютора</h2>
+        <p class="muted">Грузоотправитель создаёт заявку; указанный дистрибьютор принимает её и выполняет при закрытии дня.</p>
+        <form id="delivery-order-form" class="form-grid">
+          <select name="shipper_id" id="do-shipper-select"></select>
+          <select name="distributor_id" id="do-distributor-select"></select>
+          <select name="receiver_id" id="do-receiver-select"></select>
+          <select name="product_id" id="do-product-select"></select>
+          <label>Количество <input name="quantity" type="number" min="1" max="500000" value="500" /></label>
+          <label>Тариф ₽/ед. <input name="fee_rub_per_unit" type="number" min="0" max="10000000" value="10" /></label>
+          <label>День исполнения <input name="due_day" id="do-due-day" type="number" min="1" value="1" /></label>
+          <button type="submit">Создать заявку</button>
+        </form>
+        <div id="delivery-orders-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>🧺 Товарная матрица</h2>
         <div class="products" id="products"></div>
-      </article>
-    </section>
+      </section>
+    </div>
+
+    <!-- ───────────────────────── ЕЩЁ ───────────────────────── -->
+    <div class="tab-pane" data-pane="more" hidden>
+      <section class="grid two">
+        <article class="panel">
+          <h2>👤 Игрок и доступ</h2>
+          <p id="auth-status" class="muted">Вы играете без входа. Созданные после входа компании будут закреплены за игроком.</p>
+          <form id="auth-form" class="form-grid">
+            <input name="username" placeholder="Имя игрока" minlength="3" maxlength="32" value="player1" />
+            <input name="password" placeholder="Пароль" type="password" minlength="8" value="password123" />
+            <button name="action" value="register" type="submit">Регистрация</button>
+            <button name="action" value="login" type="submit" class="secondary">Войти</button>
+            <button id="logout" type="button" class="ghost">Выйти</button>
+          </form>
+        </article>
+        <article class="panel compact">
+          <h2>Правила владения</h2>
+          <p class="muted">Авторизованный игрок может менять решения и брать кредиты только для своих компаний. Публичное состояние не содержит пароли и токены.</p>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <h2>📊 Видимый результат симуляции</h2>
+          <span id="demo-summary">Запусти демо, чтобы увидеть динамику прибыли и операций.</span>
+        </div>
+        <div class="chart" id="profit-chart"></div>
+        <div class="demo-table" id="demo-table"></div>
+      </section>
+
+      <details class="dev-details">
+        <summary>🔧 Диагностика и разработка</summary>
+        <section class="grid two">
+          <article class="panel compact">
+            <h2>Сохранение мира</h2>
+            <p id="persistence-status" class="muted">Проверяем режим сохранения...</p>
+            <p id="database-status" class="muted">Проверяем DB-режим...</p>
+          </article>
+          <article class="panel compact">
+            <h2>Журнал закрытия дня</h2>
+            <p class="muted">Повторный запуск с тем же ключом не дублирует деньги, остатки и отчёты.</p>
+            <div class="closures" id="day-closures"></div>
+          </article>
+        </section>
+        <section class="panel compact">
+          <div class="panel-title">
+            <h2>Статус разработки</h2>
+            <span id="project-progress">Проверяем план...</span>
+          </div>
+          <p id="project-focus" class="muted">Загружаем текущий фокус...</p>
+          <div class="roadmap" id="project-roadmap"></div>
+        </section>
+      </details>
+    </div>
   </main>
   <script src="/static/app.js"></script>
 </body>

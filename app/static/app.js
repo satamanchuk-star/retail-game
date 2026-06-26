@@ -292,6 +292,31 @@ if (onboardingDismiss) {
   });
 }
 
+// Переключение вкладок-экранов
+document.querySelectorAll('.tabs .tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    const name = tab.dataset.tab;
+    document.querySelectorAll('.tabs .tab').forEach((t) => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.tab-pane').forEach((pane) => {
+      const on = pane.dataset.pane === name;
+      pane.hidden = !on;
+      pane.classList.toggle('active', on);
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+});
+
+function renderHud(state) {
+  const dayEl = document.querySelector('#hud-day');
+  const cashEl = document.querySelector('#hud-cash');
+  const cashLabel = document.querySelector('#hud-cash-label');
+  if (dayEl) dayEl.textContent = state.day ?? '—';
+  const mine = (state.companies || []).find((c) => !c.is_npc)
+    || (state.companies || []).find((c) => c.id === 'player');
+  if (cashEl) cashEl.textContent = mine ? formatRub.format(mine.cash_rub) : '—';
+  if (cashLabel && mine) cashLabel.textContent = mine.name;
+}
+
 const ADVISOR_ICON = { ok: '✅', info: '💡', warning: '⚠️', danger: '🛑' };
 
 function renderAdvisor(tips) {
@@ -645,6 +670,7 @@ async function render() {
   renderLeaderboard(leaderboard);
   renderAdvisor(advisor);
   renderOnboarding(state);
+  renderHud(state);
   renderContracts(state);
   renderBanks(state);
   renderLoans(state);
